@@ -92,7 +92,7 @@ if [ "$USE_WORKER_TMP_DIR" = "true" ]; then
     GUNICORN_CMD="$GUNICORN_CMD --worker-tmp-dir /dev/shm"
 fi
 
-GUNICORN_CMD="$GUNICORN_CMD 'src.app:server'"
+GUNICORN_CMD="$GUNICORN_CMD src.app:server"
 
 echo "Starting with command:"
 echo "$GUNICORN_CMD"
