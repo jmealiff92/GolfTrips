@@ -78,14 +78,18 @@ GUNICORN_CMD="gunicorn \
     --timeout $TIMEOUT \
     --max-requests $MAX_REQUESTS \
     --max-requests-jitter $MAX_REQUESTS_JITTER \
-    --worker-tmp-dir /dev/shm \
     --log-level $LOG_LEVEL \
     --error-logfile - \
-    --chdir '${PWD}'"
+    --chdir ${PWD}"
 
 # Add preload if enabled (saves memory but disables reload)
 if [ "$PRELOAD" = "true" ]; then
     GUNICORN_CMD="$GUNICORN_CMD --preload"
+fi
+
+# Add temp dir if enabled
+if [ "$USE_WORKER_TMP_DIR" = "true" ]; then
+    GUNICORN_CMD="$GUNICORN_CMD --worker-tmp-dir /dev/shm"
 fi
 
 GUNICORN_CMD="$GUNICORN_CMD 'src.app:server'"
