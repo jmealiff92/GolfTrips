@@ -34,7 +34,7 @@ done
 # Configuration (can be overridden via environment variables)
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8050}"
-WORKERS="${WORKERS:-$(( $(nproc) * 2 + 1 ))}"  # Auto-calculate: (2 x CPU cores) + 1
+WORKERS="${WORKERS:-3}"
 THREADS="${THREADS:-4}"
 TIMEOUT="${TIMEOUT:-300}"
 LOG_LEVEL="${LOG_LEVEL:-warning}"
