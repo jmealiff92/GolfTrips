@@ -79,6 +79,7 @@ GUNICORN_CMD="gunicorn \
     --max-requests $MAX_REQUESTS \
     --max-requests-jitter $MAX_REQUESTS_JITTER \
     --log-level $LOG_LEVEL \
+    --disable-redirect-access-to-syslog \
     --error-logfile - \
     --chdir ${PWD}"
 
