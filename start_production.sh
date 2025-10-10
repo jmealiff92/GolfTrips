@@ -34,19 +34,29 @@ done
 # Configuration (can be overridden via environment variables)
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8050}"
-WORKERS="${WORKERS:-3}"
-THREADS="${THREADS:-4}"
-TIMEOUT="${TIMEOUT:-300}"
-LOG_LEVEL="${LOG_LEVEL:-warning}"
-MAX_REQUESTS="${MAX_REQUESTS:-1000}"
+
+# Optimize for Render free tier (0.1 CPU, 512MB RAM)
+# Use 1 worker with multiple threads for memory efficiency
+WORKERS="${WORKERS:-1}"
+THREADS="${THREADS:-2}"
+TIMEOUT="${TIMEOUT:-120}"
+LOG_LEVEL="${LOG_LEVEL:-info}"
+# Recycle workers after fewer requests to prevent memory leaks
+MAX_REQUESTS="${MAX_REQUESTS:-500}"
 MAX_REQUESTS_JITTER="${MAX_REQUESTS_JITTER:-50}"
+# Worker class optimized for I/O bound applications
+WORKER_CLASS="${WORKER_CLASS:-gthread}"
+# Preload app to save memory (shared code across workers)
+PRELOAD="${PRELOAD:-true}"
 
 echo ""
-echo "Production Configuration:"
+echo "Production Configuration (Optimized for Render Free Tier):"
 echo "  Host: $HOST"
 echo "  Port: $PORT"
-echo "  Workers: $WORKERS"
+echo "  Workers: $WORKERS (memory-optimized)"
 echo "  Threads per worker: $THREADS"
+echo "  Worker Class: $WORKER_CLASS"
+echo "  Preload App: $PRELOAD"
 echo "  Timeout: ${TIMEOUT}s"
 echo "  Log Level: $LOG_LEVEL"
 echo "  Max Requests: $MAX_REQUESTS (±$MAX_REQUESTS_JITTER jitter)"
@@ -59,15 +69,29 @@ export PYTHONPATH="${PWD}:${PYTHONPATH}"
 echo -e "${GREEN}🚀 Starting Gunicorn in production mode...${NC}"
 echo ""
 
-exec gunicorn \
+# Build gunicorn command with conditional preload
+GUNICORN_CMD="gunicorn \
     --bind $HOST:$PORT \
     --workers $WORKERS \
     --threads $THREADS \
-    --worker-class gthread \
+    --worker-class $WORKER_CLASS \
     --timeout $TIMEOUT \
     --max-requests $MAX_REQUESTS \
     --max-requests-jitter $MAX_REQUESTS_JITTER \
+    --worker-tmp-dir /dev/shm \
     --log-level $LOG_LEVEL \
     --error-logfile - \
-    --chdir "${PWD}" \
-    "src.app:server"
+    --chdir '${PWD}'"
+
+# Add preload if enabled (saves memory but disables reload)
+if [ "$PRELOAD" = "true" ]; then
+    GUNICORN_CMD="$GUNICORN_CMD --preload"
+fi
+
+GUNICORN_CMD="$GUNICORN_CMD 'src.app:server'"
+
+echo "Starting with command:"
+echo "$GUNICORN_CMD"
+echo ""
+
+exec $GUNICORN_CMD

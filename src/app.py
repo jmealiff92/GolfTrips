@@ -9,7 +9,18 @@ from flask import session, redirect, url_for
 from dotenv import load_dotenv
 import logging
 
+# Configure logging with meaningful format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
+
+# Log startup
+logger.info("=" * 60)
+logger.info("Golf Trips Application Starting")
+logger.info("=" * 60)
 
 # Load environment variables
 load_dotenv()
@@ -25,16 +36,23 @@ from src.auth import init_oauth, is_authenticated, get_current_user_email, is_ad
 # Initialize services with correct database path
 # get_database_service() will automatically choose SQLite or PostgreSQL based on .env configuration
 db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'golf_trips.db')
+logger.info(f"Initializing database service (path: {db_path})")
 db_service = get_database_service(db_path)
+logger.info(f"Database type: {type(db_service).__name__}")
 data_service = DataService(db_service)
+logger.info("Data service initialized successfully")
 
 # Initialize Dash app with improved theme
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY],  # Modern, clean theme
     suppress_callback_exceptions=True,
-    title="Golf Trips"
+    title="Golf Trips",
+    # Performance optimizations
+    compress=True,  # Enable gzip compression
+    update_title=None,  # Disable title updates for performance
 )
+logger.info("Dash app initialized with compression enabled")
 
 # Access the Flask server and configure
 server = app.server
@@ -45,9 +63,13 @@ server.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
 )
+logger.info("Flask server configured with session settings")
 
 # Initialize OAuth
 oauth = init_oauth(server)
+logger.info("OAuth initialized for Google authentication")
+logger.info("Application initialization complete")
+logger.info("=" * 60)
 
 
 # ============ Authentication Routes ============
@@ -67,29 +89,48 @@ def authorize():
         resp = oauth.google.get('https://openidconnect.googleapis.com/v1/userinfo')
         user_info = resp.json()
         session['user'] = user_info
+        logger.info(f"User authenticated: {user_info.get('email', 'unknown')}")
         return redirect('/')
     except Exception as e:
-        print(f"OAuth error: {e}")
+        logger.error(f"OAuth error: {e}")
         return redirect('/login')
 
 
 @server.route('/logout')
 def logout():
     """Logout user"""
+    user_email = session.get('user', {}).get('email', 'unknown')
     session.pop('user', None)
+    logger.info(f"User logged out: {user_email}")
     return redirect('/')
 
 
 @server.route('/auth-status')
 def auth_status():
     """Get authentication status"""
-    logger.info(f"Auth status checked: {is_authenticated()}")
-    print(f"Current user email: {get_current_user_email()}")
     return {
         'authenticated': is_authenticated(),
         'email': get_current_user_email(),
         'is_admin': is_admin()
     }
+
+
+@server.route('/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        # Quick database connectivity check
+        db_service.get_years_list()
+        return {
+            'status': 'healthy',
+            'database': 'connected'
+        }, 200
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            'status': 'unhealthy',
+            'error': str(e)
+        }, 503
 
 # Custom CSS for better styling
 app.index_string = '''
@@ -383,7 +424,7 @@ app.index_string = '''
 app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='auth-store', storage_type='session'),
-    dcc.Interval(id='auth-check-interval', interval=5000, n_intervals=0),  # Check auth every 5s
+    dcc.Interval(id='auth-check-interval', interval=30000, n_intervals=0),  # Check auth every 30s (reduced for performance)
 
     html.Div([
         # Header with auth status
