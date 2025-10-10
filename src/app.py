@@ -1936,4 +1936,5 @@ def check_admin_access():
 
 # Run the app
 if __name__ == '__main__':
+    os.getenv('PORT', '8050')
     app.run(debug=True, port=8050)

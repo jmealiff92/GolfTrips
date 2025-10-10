@@ -52,12 +52,6 @@ echo "  Log Level: $LOG_LEVEL"
 echo "  Max Requests: $MAX_REQUESTS (±$MAX_REQUESTS_JITTER jitter)"
 echo ""
 
-# Create logs directory
-mkdir -p logs
-
-# Create PID directory
-mkdir -p run
-
 # Set PYTHONPATH to include the project root
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
@@ -73,25 +67,7 @@ exec gunicorn \
     --timeout $TIMEOUT \
     --max-requests $MAX_REQUESTS \
     --max-requests-jitter $MAX_REQUESTS_JITTER \
-    --access-logfile logs/access.log \
-    --error-logfile logs/error.log \
     --log-level $LOG_LEVEL \
-    --capture-output \
-    --enable-stdio-inheritance \
-    --pid run/gunicorn.pid \
+    --error-logfile - \
     --chdir "${PWD}" \
-    --daemon \
     "src.app:server"
-
-echo -e "${GREEN}✅ Gunicorn started successfully!${NC}"
-echo ""
-echo "Process ID saved to: run/gunicorn.pid"
-echo "Access logs: logs/access.log"
-echo "Error logs: logs/error.log"
-echo ""
-echo "To stop the server:"
-echo "  kill \$(cat run/gunicorn.pid)"
-echo ""
-echo "To view logs:"
-echo "  tail -f logs/error.log"
-echo "  tail -f logs/access.log"
