@@ -16,13 +16,11 @@ echo -e "${GREEN}🏌️  Golf Trips - Production Mode${NC}"
 echo "===================================="
 
 # Check if .env exists
-if [ ! -f .env ]; then
-    echo -e "${RED}❌ Error: .env file not found!${NC}"
-    exit 1
+if [ -f .env ]; then
+    # Load environment variables
+    export $(grep -v '^#' .env | xargs)
 fi
 
-# Load environment variables
-export $(grep -v '^#' .env | xargs)
 
 # Validate required environment variables
 REQUIRED_VARS=("GOOGLE_CLIENT_ID" "GOOGLE_CLIENT_SECRET" "SECRET_KEY")
