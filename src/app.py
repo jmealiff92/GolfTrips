@@ -1388,7 +1388,7 @@ def update_player_details(player):
             opp_losses = opp_stats.get('Loss', 0)
             opp_points = opp_wins + (opp_halves * 0.5)
             ppg = opp_points / len(opp_matches)
-            win_pct = ((opp_wins + (opp_halves * 0.5)) / len(opp_matches) * 100) if len(opp_matches) > 0 else 0
+            opp_win_pct = ((opp_wins + (opp_halves * 0.5)) / len(opp_matches) * 100) if len(opp_matches) > 0 else 0
 
             opponent_stats.append({
                 'Opponent': opponent,
@@ -1398,7 +1398,7 @@ def update_player_details(player):
                 'Losses': opp_losses,
                 'Points': opp_points,
                 'PPG': round(ppg, 2),
-                'Win %': f"{win_pct:.1f}%"
+                'Win %': f"{opp_win_pct:.1f}%"
             })
 
     opponent_stats_df = pd.DataFrame(opponent_stats).sort_values('PPG', ascending=False) if opponent_stats else pd.DataFrame()
