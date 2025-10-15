@@ -6,8 +6,8 @@ match creation with auto-calculations, and match editing
 import unittest
 import os
 import tempfile
-from db_service import DatabaseService
-from handicap_calculator import HandicapCalculator
+from src.db_service import DatabaseService
+from src.handicap_calculator import HandicapCalculator
 
 
 class TestPlayerManagementIntegration(unittest.TestCase):

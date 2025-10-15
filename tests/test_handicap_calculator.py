@@ -3,7 +3,7 @@ Unit tests for handicap calculator
 Tests WHS/R&A handicap calculation methods
 """
 import unittest
-from handicap_calculator import HandicapCalculator
+from src.handicap_calculator import HandicapCalculator
 
 
 class TestHandicapCalculator(unittest.TestCase):
