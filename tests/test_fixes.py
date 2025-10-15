@@ -4,7 +4,7 @@ Test script to verify the fixes for:
 1. New players appearing in add match dropdown
 2. Courses table displaying in manage courses
 """
-from db_service import DatabaseService
+from src.db_service import DatabaseService
 
 def test_player_visibility():
     """Test that all players are accessible"""

@@ -4,7 +4,7 @@ Test script for new match management features:
 1. Delete match functionality
 2. Duplicate match validation
 """
-from db_service import DatabaseService
+from src.db_service import DatabaseService
 import tempfile
 import os
 
