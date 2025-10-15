@@ -223,7 +223,7 @@ class DataService:
         df = self.build_player_matches()
         df['partnership'] = (
             df[['player_name','partner_name']]
-            .apply(lambda s: ' & '.join(sorted((str(s[0] or ''), str(s[1] or '')))), axis=1)
+            .apply(lambda s: ' & '.join(sorted((str(s.iloc[0] or ''), str(s.iloc[1] or '')))), axis=1)
             .replace('&', np.nan)  # if both missing
         )
         if player == 'All':
