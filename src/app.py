@@ -407,6 +407,16 @@ app.index_string = '''
                 background-color: #c8e6c9 !important;
                 color: #1b5e20 !important;
             }
+
+            /* Match Cards Styling */
+            .match-card {
+                transition: all 0.3s ease !important;
+            }
+
+            .match-card:hover {
+                transform: translateY(-5px) !important;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+            }
         </style>
     </head>
     <body>
@@ -435,7 +445,8 @@ app.layout = html.Div([
 
         # Navigation
         dbc.Nav([
-            dbc.NavLink('📊 Team Summary', href='/', active='exact'),
+            dbc.NavLink('📊 Summary', href='/', active='exact'),
+            dbc.NavLink('🏆 Matches', href='/matches', active='exact'),
             dbc.NavLink('👤 Player Details', href='/player-details', active='exact'),
             dbc.NavLink('👥 Manage Players', href='/manage-players', active='exact', id='nav-manage-players'),
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
@@ -459,8 +470,9 @@ app.layout = html.Div([
 ])
 
 
-# ============ Page 1: Team Summary and Player Performance ============
+# ============ Page 1: Summary and Player Performance ============
 def create_team_summary_page():
+    partner_performance = data_service.get_partner_performace(min_matches=3)
     return html.Div([
         html.H2("Overall Team Summary"),
         dash_table.DataTable(
@@ -551,6 +563,17 @@ def create_team_summary_page():
             sort_action='native',
             filter_action='native',
             page_size=20
+        ),
+        html.H2("Fourball Partnerships", style={'marginTop': '30px'}),
+        dash_table.DataTable(
+            columns=[{'id': i, 'name': i.title()} for i in partner_performance.columns.values],
+            data=partner_performance.to_dict('records'),
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left', 'padding': '10px'},
+            style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+            sort_action='native',
+            filter_action='native',
+            page_size=20
         )
     ])
 
@@ -603,13 +626,10 @@ def create_player_details_page():
         dash_table.DataTable(
             id='partner-performance-table',
             columns=[
-                {'name': 'Partner', 'id': 'Partner'},
-                {'name': 'Matches', 'id': 'Matches'},
-                {'name': 'Wins', 'id': 'Wins'},
-                {'name': 'Halves', 'id': 'Halves'},
-                {'name': 'Losses', 'id': 'Losses'},
-                {'name': 'Points', 'id': 'Points'},
-                {'name': 'PPG', 'id': 'PPG'}
+                {'id':i, 'name':i} for i in [
+                    'partnership','Matches','Wins','Halves',
+                    'Losses','Points','PPG'
+                ]
             ],
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left', 'padding': '10px'},
@@ -983,7 +1003,130 @@ def create_manage_courses_page():
     ])
 
 
-# ============ Page 8: Edit Matches ============
+# ============ Page 8: Matches Display ============
+def create_matches_page():
+    """Create a page displaying all matches as colored cards"""
+    # Get all years for the dropdown
+    years = sorted(db_service.get_years_list(), reverse=True)
+    
+    return html.Div([
+        html.H2("All Matches", style={'marginBottom': '30px', 'textAlign': 'center'}),
+        
+        # Year filter section
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Filter by Year:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                        dcc.Dropdown(
+                            id='matches-year-filter',
+                            options=[{'label': 'All Years', 'value': 'all'}] + 
+                                   [{'label': str(year), 'value': year} for year in years],
+                            value='all',
+                            clearable=False,
+                            style={'width': '200px'}
+                        )
+                    ], width=12, style={'textAlign': 'center'})
+                ])
+            ])
+        ], className="shadow mb-4"),
+        
+        # Matches display container
+        html.Div(id='matches-display-container')
+    ])
+
+
+def create_match_card(match, show_year=True):
+    """Helper function to create a match card"""
+    # Determine card color based on result
+    result = match.get('Result', '')
+    if result == 'Blue':
+        card_bg_color = '#e3f2fd'  # Light blue background
+        border_color = '#1976d2'   # Darker blue border
+        header_bg_color = '#1976d2'  # Blue header
+        text_color = '#0d47a1'     # Dark blue text
+    elif result == 'Red':
+        card_bg_color = '#ffebee'  # Light red background
+        border_color = '#d32f2f'   # Darker red border
+        header_bg_color = '#d32f2f'  # Red header
+        text_color = '#c62828'     # Dark red text
+    elif result == 'Half':
+        card_bg_color = '#f5f5f5'  # Light grey background
+        border_color = '#616161'   # Darker grey border
+        header_bg_color = '#616161'  # Grey header
+        text_color = '#424242'     # Dark grey text
+    else:  # TBD or empty
+        card_bg_color = '#fafafa'  # Very light grey background
+        border_color = '#9e9e9e'   # Light grey border
+        header_bg_color = '#9e9e9e'  # Light grey header
+        text_color = '#757575'     # Medium grey text
+    
+    # Format team information with sorted names
+    blue_players = [match['BluePlayer1']]
+    if pd.notna(match.get('BluePlayer2')) and match['BluePlayer2'] not in ['N/A', 'Ghost', '']:
+        blue_players.append(match['BluePlayer2'])
+    blue_team = " & ".join(sorted(blue_players))
+    
+    red_players = [match['RedPlayer1']]
+    if pd.notna(match.get('RedPlayer2')) and match['RedPlayer2'] not in ['N/A', 'Ghost', '']:
+        red_players.append(match['RedPlayer2'])
+    red_team = " & ".join(sorted(red_players))
+    
+    # Format score
+    score = match.get('Score', '')
+    if not score or score in ['N/A', '']:
+        score = 'TBD'
+    
+    # Create header title
+    if show_year:
+        header_title = f"Year {match['Year']} - Match {match['MatchNumber']}"
+    else:
+        header_title = f"Match {match['MatchNumber']}"
+    
+    # Create the card
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H5(header_title, className="mb-0", style={'color': 'dark-green', 'fontWeight': 'bold'})
+        ], style={'backgroundColor': header_bg_color, 'color': 'dark-green'}),
+        dbc.CardBody([
+            html.H6(f"🏌️ {match['Course']}", className="card-title"),
+            html.P(f"📅 {match['MatchType']} Match", className="card-text"),
+            html.Hr(),
+            html.Div([
+                html.Div([
+                    html.Strong("Blue Team:", style={'color': '#1976d2'}),
+                    html.Br(),
+                    html.Span(blue_team)
+                ], style={'textAlign': 'left', 'display': 'inline-block', 'width': '45%'}),
+                html.Div([
+                    html.Strong("Red Team:", style={'color': '#d32f2f'}),
+                    html.Br(),
+                    html.Span(red_team)
+                ], style={'textAlign': 'right', 'display': 'inline-block', 'width': '45%'})
+            ]),
+            html.Hr(),
+            html.Div([
+                html.Strong("Result: "),
+                html.Span(result if result else 'TBD', 
+                         style={'fontWeight': 'bold', 'color': text_color})
+            ], style={'textAlign': 'center'}),
+            html.Div([
+                html.Strong("Score: "),
+                html.Span(score, style={'fontWeight': 'bold', 'color': text_color})
+            ], style={'textAlign': 'center', 'marginTop': '10px'})
+        ], style={'backgroundColor': card_bg_color})
+    ], 
+    style={
+        'border': f'3px solid {border_color}',
+        'marginBottom': '20px',
+        'boxShadow': f'0 4px 8px rgba(0,0,0,0.1)',
+        'transition': 'transform 0.2s ease-in-out',
+        'backgroundColor': card_bg_color
+    },
+    className="match-card")
+
+
+# ============ Page 9: Edit Matches ============
 def create_edit_matches_page():
     return html.Div([
         html.H2("Edit Match Results"),
@@ -1051,7 +1194,9 @@ def create_edit_matches_page():
     Input('url', 'pathname')
 )
 def display_page(pathname):
-    if pathname == '/player-details':
+    if pathname == '/matches':
+        return create_matches_page()
+    elif pathname == '/player-details':
         return create_player_details_page()
     elif pathname == '/manage-players':
         return create_manage_players_page()
@@ -1315,43 +1460,44 @@ def update_player_details(player):
     course_perf = data_service.get_player_course_performance(player)
 
     # Fourball partner performance
-    fourball_matches = player_matches[player_matches['MatchType'] == 'Fourball'].copy()
-    partner_stats = []
-    partners = set()
+    # fourball_matches = player_matches[player_matches['MatchType'] == 'Fourball'].copy()
+    # partner_stats = []
+    # partners = set()
 
-    for _, row in fourball_matches.iterrows():
-        if row['Player_Team'] == 'Blue':
-            partner = row['BluePlayer2'] if row['BluePlayer1'] == player else row['BluePlayer1']
-        else:
-            partner = row['RedPlayer2'] if row['RedPlayer1'] == player else row['RedPlayer1']
-        if pd.notna(partner) and partner not in ['N/A', 'Ghost', '']:
-            partners.add(partner)
+    # for _, row in fourball_matches.iterrows():
+    #     if row['Player_Team'] == 'Blue':
+    #         partner = row['BluePlayer2'] if row['BluePlayer1'] == player else row['BluePlayer1']
+    #     else:
+    #         partner = row['RedPlayer2'] if row['RedPlayer1'] == player else row['RedPlayer1']
+    #     if pd.notna(partner) and partner not in ['N/A', 'Ghost', '']:
+    #         partners.add(partner)
 
-    for partner in partners:
-        partner_matches = fourball_matches[
-            ((fourball_matches['BluePlayer1'] == player) & (fourball_matches['BluePlayer2'] == partner)) |
-            ((fourball_matches['BluePlayer2'] == player) & (fourball_matches['BluePlayer1'] == partner)) |
-            ((fourball_matches['RedPlayer1'] == player) & (fourball_matches['RedPlayer2'] == partner)) |
-            ((fourball_matches['RedPlayer2'] == player) & (fourball_matches['RedPlayer1'] == partner))
-        ]
-        if len(partner_matches) > 0:
-            p_stats = partner_matches['Outcome'].value_counts().to_dict()
-            p_wins = p_stats.get('Win', 0)
-            p_halves = p_stats.get('Half', 0)
-            p_losses = p_stats.get('Loss', 0)
-            p_points = p_wins + (p_halves * 0.5)
-            ppg = p_points / len(partner_matches)
-            partner_stats.append({
-                'Partner': partner,
-                'Matches': len(partner_matches),
-                'Wins': p_wins,
-                'Halves': p_halves,
-                'Losses': p_losses,
-                'Points': p_points,
-                'PPG': round(ppg, 2)
-            })
+    # for partner in partners:
+    #     partner_matches = fourball_matches[
+    #         ((fourball_matches['BluePlayer1'] == player) & (fourball_matches['BluePlayer2'] == partner)) |
+    #         ((fourball_matches['BluePlayer2'] == player) & (fourball_matches['BluePlayer1'] == partner)) |
+    #         ((fourball_matches['RedPlayer1'] == player) & (fourball_matches['RedPlayer2'] == partner)) |
+    #         ((fourball_matches['RedPlayer2'] == player) & (fourball_matches['RedPlayer1'] == partner))
+    #     ]
+    #     if len(partner_matches) > 0:
+    #         p_stats = partner_matches['Outcome'].value_counts().to_dict()
+    #         p_wins = p_stats.get('Win', 0)
+    #         p_halves = p_stats.get('Half', 0)
+    #         p_losses = p_stats.get('Loss', 0)
+    #         p_points = p_wins + (p_halves * 0.5)
+    #         ppg = p_points / len(partner_matches)
+    #         partner_stats.append({
+    #             'Partner': partner,
+    #             'Matches': len(partner_matches),
+    #             'Wins': p_wins,
+    #             'Halves': p_halves,
+    #             'Losses': p_losses,
+    #             'Points': p_points,
+    #             'PPG': round(ppg, 2)
+    #         })
 
-    partner_stats_df = pd.DataFrame(partner_stats).sort_values('PPG', ascending=False) if partner_stats else pd.DataFrame()
+    # partner_stats_df = pd.DataFrame(partner_stats).sort_values('PPG', ascending=False) if partner_stats else pd.DataFrame()
+    partner_stats_df = data_service.get_partner_performace(player)
 
     # Opponent performance
     opponent_stats = []
@@ -1731,6 +1877,59 @@ def delete_course(n_clicks, name):
                    color="danger", dismissable=True, duration=4000), data
 
 
+# ============ Matches Display Callbacks ============
+
+# Filter matches by year
+@app.callback(
+    Output('matches-display-container', 'children'),
+    Input('matches-year-filter', 'value')
+)
+def update_matches_display(year_filter):
+    """Update matches display based on year filter"""
+    # Get all matches from the database
+    if year_filter == 'all':
+        matches_df = db_service.get_all_matches()
+    else:
+        matches_df = db_service.get_matches_by_year(year_filter)
+    
+    if matches_df.empty:
+        return dbc.Alert("No matches found", color="info", className="text-center")
+    
+    # Sort matches by year, day, and match number
+    matches_df = matches_df.sort_values(['Year', 'Day', 'MatchNumber'])
+    
+    # Group matches by year and day for better organization
+    years = sorted(matches_df['Year'].unique(), reverse=True)
+    
+    year_sections = []
+    for year in years:
+        year_matches = matches_df[matches_df['Year'] == year]
+        days = sorted(year_matches['Day'].unique())
+        
+        day_sections = []
+        for day in days:
+            day_matches = year_matches[year_matches['Day'] == day]
+            day_cards = [create_match_card(match, show_year=False) for _, match in day_matches.iterrows()]
+            
+            day_sections.append(
+                html.Div([
+                    html.H3(f"Day {day}", style={'marginBottom': '15px', 'color': '#2e7d32', 'fontSize': '1.5rem'}),
+                    dbc.Row([
+                        dbc.Col(card, width=12, lg=6, xl=3) for card in day_cards
+                    ], className="g-3")
+                ], style={'marginBottom': '30px'})
+            )
+        
+        year_sections.append(
+            html.Div([
+                html.H2(f"Year {year}", style={'marginBottom': '25px', 'color': '#1b5e20', 'fontSize': '2rem', 'textAlign': 'center'}),
+                html.Div(day_sections)
+            ], style={'marginBottom': '50px'})
+        )
+    
+    return html.Div(year_sections)
+
+
 # ============ Edit Matches Callbacks ============
 
 # Display matches table with edit buttons
@@ -1750,6 +1949,19 @@ def display_matches_for_edit(year_filter):
     # Add edit button column
     matches['Edit'] = '✏️ Edit'
 
+    # Format team data to show both players for fourball matches with sorted names
+    matches_display = matches.copy()
+    matches_display['Blue Team'] = matches_display.apply(
+        lambda row: " & ".join(sorted([p for p in [row['BluePlayer1'], row.get('BluePlayer2')] 
+                                      if pd.notna(p) and p not in ['N/A', 'Ghost', '']])),
+        axis=1
+    )
+    matches_display['Red Team'] = matches_display.apply(
+        lambda row: " & ".join(sorted([p for p in [row['RedPlayer1'], row.get('RedPlayer2')] 
+                                      if pd.notna(p) and p not in ['N/A', 'Ghost', '']])),
+        axis=1
+    )
+
     return dash_table.DataTable(
         id='matches-edit-table',
         columns=[
@@ -1758,13 +1970,13 @@ def display_matches_for_edit(year_filter):
             {'name': 'Match #', 'id': 'MatchNumber'},
             {'name': 'Course', 'id': 'Course'},
             {'name': 'Type', 'id': 'MatchType'},
-            {'name': 'Blue Team', 'id': 'BluePlayer1'},
-            {'name': 'Red Team', 'id': 'RedPlayer1'},
+            {'name': 'Blue Team', 'id': 'Blue Team'},
+            {'name': 'Red Team', 'id': 'Red Team'},
             {'name': 'Result', 'id': 'Result'},
             {'name': 'Score', 'id': 'Score'},
         ],
-        data=matches[['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
-                     'BluePlayer1', 'RedPlayer1', 'Result', 'Score']].to_dict('records'),
+        data=matches_display[['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
+                             'Blue Team', 'Red Team', 'Result', 'Score']].to_dict('records'),
         style_table={'overflowX': 'auto'},
         style_cell={'textAlign': 'left', 'padding': '10px'},
         style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
@@ -1869,10 +2081,19 @@ def toggle_edit_modal(selected_rows, close_clicks, save_clicks, delete_clicks, t
             'MatchNumber': match['MatchNumber']
         })
 
+        # Format team display for modal with sorted names
+        blue_players = [p for p in [match['BluePlayer1'], match.get('BluePlayer2')] 
+                       if pd.notna(p) and p not in ['N/A', 'Ghost', '']]
+        blue_team = " & ".join(sorted(blue_players))
+        
+        red_players = [p for p in [match['RedPlayer1'], match.get('RedPlayer2')] 
+                      if pd.notna(p) and p not in ['N/A', 'Ghost', '']]
+        red_team = " & ".join(sorted(red_players))
+
         info = html.Div([
             html.P(f"Year: {match['Year']}, Day: {match['Day']}, Match: {match['MatchNumber']}"),
             html.P(f"Course: {match['Course']}"),
-            html.P(f"Blue Team: {match['BluePlayer1']} vs Red Team: {match['RedPlayer1']}"),
+            html.P(f"Blue Team: {blue_team} vs Red Team: {red_team}"),
         ])
 
         return True, info, match.get('Result', ''), match.get('Score', ''), stored, None
