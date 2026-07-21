@@ -2,6 +2,8 @@ import dash
 from dash import dcc, html, dash_table, Input, Output, State, callback_context, no_update
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 import os
 import sys
@@ -693,8 +695,7 @@ def create_player_details_page():
 def create_add_match_page():
     # Get all players from players table (not just those in matches)
     players = sorted(db_service.get_all_players())
-    years = db_service.get_years_list()
-    current_year = max(years) if years else 2024
+    current_year = date.today().year
     # Get courses from courses table (not just those in matches)
     all_courses = db_service.get_all_courses()
     courses = [c['name'] for c in all_courses]
@@ -1254,7 +1255,31 @@ def create_edit_matches_page():
         ], className='shadow mb-4'),
 
         # Matches Table
-        html.Div(id='edit-matches-table-container'),
+        html.Div([
+            dash_table.DataTable(
+                id='matches-edit-table',
+                columns=[
+                    {'name': 'Year', 'id': 'Year'},
+                    {'name': 'Day', 'id': 'Day'},
+                    {'name': 'Match #', 'id': 'MatchNumber'},
+                    {'name': 'Course', 'id': 'Course'},
+                    {'name': 'Type', 'id': 'MatchType'},
+                    {'name': 'Blue Team', 'id': 'Blue Team'},
+                    {'name': 'Red Team', 'id': 'Red Team'},
+                    {'name': 'Result', 'id': 'Result'},
+                    {'name': 'Score', 'id': 'Score'},
+                ],
+                data=[],
+                style_table={'overflowX': 'auto'},
+                style_cell={'textAlign': 'left', 'padding': '10px'},
+                style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+                row_selectable='single',
+                selected_rows=[],
+                page_size=20,
+                sort_action='native',
+                filter_action='native'
+            )
+        ], id='edit-matches-table-container'),
 
         # Edit Match Modal
         dbc.Modal([
@@ -1341,6 +1366,48 @@ def toggle_new_course_input(course_value):
     if course_value == 'NEW':
         return {'marginTop': '10px', 'display': 'block'}
     return {'marginTop': '10px', 'display': 'none'}
+
+
+# Restrict player dropdowns to each player's assigned team for the selected year
+@app.callback(
+    [Output('input-blue-player1', 'options'),
+     Output('input-blue-player1', 'value'),
+     Output('input-blue-player2', 'options'),
+     Output('input-blue-player2', 'value'),
+     Output('input-red-player1', 'options'),
+     Output('input-red-player1', 'value'),
+     Output('input-red-player2', 'options'),
+     Output('input-red-player2', 'value')],
+    Input('input-year', 'value'),
+    [State('input-blue-player1', 'value'),
+     State('input-blue-player2', 'value'),
+     State('input-red-player1', 'value'),
+     State('input-red-player2', 'value')],
+    prevent_initial_call=False
+)
+def filter_players_by_team(year, blue_p1, blue_p2, red_p1, red_p2):
+    """Limit each team's player options to players assigned to that team for the year"""
+    all_options = [{'label': p, 'value': p} for p in sorted(db_service.get_all_players())]
+
+    blue_options, red_options = all_options, all_options
+    if year:
+        assignments = db_service.get_team_assignments_by_year(year)
+        blue_players = sorted(a['name'] for a in assignments if a['team'] == 'Blue')
+        red_players = sorted(a['name'] for a in assignments if a['team'] == 'Red')
+        if blue_players:
+            blue_options = [{'label': p, 'value': p} for p in blue_players]
+        if red_players:
+            red_options = [{'label': p, 'value': p} for p in red_players]
+
+    blue_values = {opt['value'] for opt in blue_options}
+    red_values = {opt['value'] for opt in red_options}
+
+    blue_p1 = blue_p1 if blue_p1 in blue_values else None
+    blue_p2 = blue_p2 if blue_p2 in blue_values else None
+    red_p1 = red_p1 if red_p1 in red_values else None
+    red_p2 = red_p2 if red_p2 in red_values else None
+
+    return blue_options, blue_p1, blue_options, blue_p2, red_options, red_p1, red_options, red_p2
 
 
 # Auto-calculate handicaps when players and course are selected
@@ -1554,14 +1621,35 @@ def update_player_details(player):
     yearly_points['Points'] = yearly_points.get('Win', 0) + (yearly_points.get('Half', 0) * 0.5)
     yearly_points = yearly_points.reset_index()[['Year', 'Points']]
 
-    fig = px.bar(
-        yearly_points, x='Year', y='Points',
-        title=f"{player}'s Points per Year",
-        color_discrete_sequence=['#1e90ff']
-    ).update_layout(
-        xaxis_title="Year", yaxis_title="Points",
-        yaxis=dict(range=[0, max(yearly_points['Points']) + 1]) if len(yearly_points) > 0 else {}
+    yearly_points['Handicap'] = yearly_points['Year'].apply(
+        lambda year: db_service.get_player_handicap(player, int(year))
     )
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=yearly_points['Year'], y=yearly_points['Points'],
+            name='Points', marker_color='#1e90ff'
+        ),
+        secondary_y=False
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=yearly_points['Year'], y=yearly_points['Handicap'],
+            name='Handicap Index', mode='lines+markers',
+            marker_color='#ff8c00', connectgaps=True
+        ),
+        secondary_y=True
+    )
+    fig.update_layout(
+        title=f"{player}'s Points per Year",
+        xaxis_title="Year"
+    )
+    fig.update_yaxes(
+        title_text="Points", secondary_y=False,
+        range=[0, max(yearly_points['Points']) + 1] if len(yearly_points) > 0 else None
+    )
+    fig.update_yaxes(title_text="Handicap Index", secondary_y=True, showgrid=False)
 
     # Course performance
     course_perf = data_service.get_player_course_performance(player)
@@ -2262,14 +2350,9 @@ def toggle_edit_modal(selected_rows, close_clicks, save_clicks, delete_clicks, t
             'MatchNumber': match['MatchNumber']
         })
 
-        # Format team display for modal with sorted names
-        blue_players = [p for p in [match['BluePlayer1'], match.get('BluePlayer2')] 
-                       if pd.notna(p) and p not in ['N/A', 'Ghost', '']]
-        blue_team = " & ".join(sorted(blue_players))
-        
-        red_players = [p for p in [match['RedPlayer1'], match.get('RedPlayer2')] 
-                      if pd.notna(p) and p not in ['N/A', 'Ghost', '']]
-        red_team = " & ".join(sorted(red_players))
+        # Team display strings were already computed for the table's Blue Team/Red Team columns
+        blue_team = match['Blue Team']
+        red_team = match['Red Team']
 
         info = html.Div([
             html.P(f"Year: {match['Year']}, Day: {match['Day']}, Match: {match['MatchNumber']}"),
