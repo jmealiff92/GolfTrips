@@ -85,6 +85,27 @@ class DatabaseServiceBase(ABC):
     def delete_handicap(self, name: str, year: int) -> bool:
         pass
 
+    # Team Operations
+    @abstractmethod
+    def assign_player_team(self, name: str, year: int, team: str) -> bool:
+        pass
+
+    @abstractmethod
+    def get_player_team_assignment(self, name: str, year: int) -> Optional[str]:
+        pass
+
+    @abstractmethod
+    def get_team_assignments_by_year(self, year: int) -> List[Dict]:
+        pass
+
+    @abstractmethod
+    def delete_player_team(self, name: str, year: int) -> bool:
+        pass
+
+    @abstractmethod
+    def get_team_years_list(self) -> List[int]:
+        pass
+
     # Course Operations
     @abstractmethod
     def add_course(self, name: str, par: int, slope_rating: float, course_rating: float) -> bool:

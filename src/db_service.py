@@ -74,6 +74,14 @@ class SQLiteDatabaseService(DatabaseServiceBase):
                           PRIMARY KEY (name, year),
                           FOREIGN KEY (name) REFERENCES players(name))''')
 
+            # Player teams table (Red/Blue roster assignment per year)
+            c.execute('''CREATE TABLE IF NOT EXISTS player_teams
+                         (name TEXT,
+                          year INTEGER,
+                          team TEXT,
+                          PRIMARY KEY (name, year),
+                          FOREIGN KEY (name) REFERENCES players(name))''')
+
             # Courses table
             c.execute('''CREATE TABLE IF NOT EXISTS courses
                          (name TEXT PRIMARY KEY,
@@ -309,6 +317,61 @@ class SQLiteDatabaseService(DatabaseServiceBase):
             c = conn.cursor()
             c.execute('DELETE FROM handicaps WHERE name = ? AND year = ?', (name, year))
             return c.rowcount > 0
+
+    # ============ Team Operations ============
+
+    def assign_player_team(self, name: str, year: int, team: str) -> bool:
+        """Assign a player to Red or Blue team for a specific year"""
+        try:
+            with self.get_connection() as conn:
+                self._add_player_if_not_exists(name, conn)
+
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO player_teams (name, year, team)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(name, year)
+                    DO UPDATE SET team = excluded.team
+                ''', (name, year, team))
+                return True
+        except Exception as e:
+            print(f"Error assigning player team: {e}")
+            return False
+
+    def get_player_team_assignment(self, name: str, year: int) -> Optional[str]:
+        """Get a player's assigned team for a specific year"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT team FROM player_teams WHERE name = ? AND year = ?', (name, year))
+            result = c.fetchone()
+            return result[0] if result else None
+
+    def get_team_assignments_by_year(self, year: int) -> List[Dict]:
+        """Get all player team assignments with handicaps for a year"""
+        with self.get_connection() as conn:
+            query = '''
+                SELECT pt.name, pt.team, h.handicap_index
+                FROM player_teams pt
+                LEFT JOIN handicaps h ON pt.name = h.name AND h.year = ?
+                WHERE pt.year = ?
+                ORDER BY pt.team, pt.name
+            '''
+            df = pd.read_sql_query(query, conn, params=(year, year))
+            return df.to_dict('records')
+
+    def delete_player_team(self, name: str, year: int) -> bool:
+        """Remove a player's team assignment for a specific year"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('DELETE FROM player_teams WHERE name = ? AND year = ?', (name, year))
+            return c.rowcount > 0
+
+    def get_team_years_list(self) -> List[int]:
+        """Get list of all years with team assignments"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT DISTINCT year FROM player_teams ORDER BY year DESC')
+            return [row[0] for row in c.fetchall()]
 
     # ============ Course Operations ============
 

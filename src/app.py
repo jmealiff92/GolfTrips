@@ -5,6 +5,7 @@ import plotly.express as px
 import dash_bootstrap_components as dbc
 import os
 import sys
+from datetime import date
 from flask import session, redirect, url_for
 from dotenv import load_dotenv
 import logging
@@ -447,6 +448,7 @@ app.layout = html.Div([
         dbc.Nav([
             dbc.NavLink('📊 Summary', href='/', active='exact'),
             dbc.NavLink('🏆 Matches', href='/matches', active='exact'),
+            dbc.NavLink('🏳️ Teams', href='/teams', active='exact'),
             dbc.NavLink('👤 Player Details', href='/player-details', active='exact'),
             dbc.NavLink('👥 Manage Players', href='/manage-players', active='exact', id='nav-manage-players'),
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
@@ -566,7 +568,12 @@ def create_team_summary_page():
         ),
         html.H2("Fourball Partnerships", style={'marginTop': '30px'}),
         dash_table.DataTable(
-            columns=[{'id': i, 'name': i.title()} for i in partner_performance.columns.values],
+            columns=[
+                {'id':i, 'name':i} for i in [
+                    'partnership','Matches','Wins','Halves',
+                    'Losses','Points','PPG'
+                ]
+            ],
             data=partner_performance.to_dict('records'),
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left', 'padding': '10px'},
@@ -876,8 +883,7 @@ def create_course_stats_page():
 # ============ Page 6: Manage Players ============
 def create_manage_players_page():
     players = db_service.get_all_players_with_handicaps()
-    years = db_service.get_years_list()
-    current_year = max(years) if years else 2024
+    current_year = date.today().year
 
     return html.Div([
         html.H2("Manage Players"),
@@ -906,7 +912,7 @@ def create_manage_players_page():
 
         # Manage Existing Players Section
         dbc.Card([
-            dbc.CardHeader(html.H4("Manage Player Handicaps")),
+            dbc.CardHeader(html.H4("Manage Player")),
             dbc.CardBody([
                 dbc.Row([
                     dbc.Col([
@@ -921,17 +927,34 @@ def create_manage_players_page():
                         dbc.Label("Year"),
                         dbc.Input(id='manage-player-year', type='number', value=current_year, min=2018, max=2030)
                     ], width=3),
+                ], className='mb-3'),
+
+                html.Hr(),
+                dbc.Row([
                     dbc.Col([
                         dbc.Label("Handicap Index"),
                         dbc.Input(id='manage-player-handicap', type='number', step=0.1, placeholder='e.g., 12.5')
-                    ], width=3),
+                    ], width=6),
+                    dbc.Col([
+                        dbc.Label("Team (Red/Blue)"),
+                        dcc.Dropdown(
+                            id='manage-player-team',
+                            options=[
+                                {'label': 'Blue', 'value': 'Blue'},
+                                {'label': 'Red', 'value': 'Red'}
+                            ],
+                            placeholder='Select team'
+                        )
+                    ], width=6),
                 ], className='mb-3'),
+
                 dbc.Row([
                     dbc.Col([
-                        dbc.Button("Update Handicap", id='btn-update-handicap', color='success', className='me-2'),
-                        dbc.Button("Delete Handicap", id='btn-delete-handicap', color='danger')
+                        dbc.Button("Save Handicap & Team", id='btn-update-player', color='success', className='me-2'),
+                        dbc.Button("Delete Handicap", id='btn-delete-handicap', color='danger', className='me-2'),
+                        dbc.Button("Remove Team Assignment", id='btn-delete-team', color='danger')
                     ])
-                ])
+                ]),
             ])
         ], className='shadow mb-4'),
 
@@ -1126,6 +1149,88 @@ def create_match_card(match, show_year=True):
     className="match-card")
 
 
+# ============ Page: Teams ============
+def create_teams_page():
+    """Create a page displaying the Red/Blue team rosters with handicaps for a selected year"""
+    # Years come from matches, existing team assignments, and today's real year,
+    # so a roster can be drafted for a year before any matches exist for it.
+    real_current_year = date.today().year
+    years = sorted(
+        set(db_service.get_years_list()) | set(db_service.get_team_years_list()) | {real_current_year},
+        reverse=True
+    )
+    current_year = real_current_year if real_current_year in years else years[0]
+
+    return html.Div([
+        html.H2("Team Rosters", style={'marginBottom': '30px', 'textAlign': 'center'}),
+
+        # Year filter section
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Select Year:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                        dcc.Dropdown(
+                            id='teams-year-filter',
+                            options=[{'label': str(year), 'value': year} for year in years],
+                            value=current_year,
+                            clearable=False,
+                            style={'width': '200px'}
+                        )
+                    ], width=12, style={'textAlign': 'center'})
+                ])
+            ])
+        ], className="shadow mb-4"),
+
+        # Teams display container
+        html.Div(id='teams-display-container')
+    ])
+
+
+def create_team_roster_card(team_name, players):
+    """Helper function to build a team roster card with player handicaps, matching the Matches page color scheme"""
+    if team_name == 'Blue':
+        card_bg_color = '#e3f2fd'  # Light blue background
+        border_color = '#1976d2'   # Darker blue border
+        header_bg_color = '#1976d2'  # Blue header
+        text_color = '#0d47a1'     # Dark blue text
+    else:  # Red
+        card_bg_color = '#ffebee'  # Light red background
+        border_color = '#d32f2f'   # Darker red border
+        header_bg_color = '#d32f2f'  # Red header
+        text_color = '#c62828'     # Dark red text
+
+    if players:
+        rows = []
+        for p in players:
+            hcp = p.get('handicap_index')
+            hcp_text = f"{hcp:.1f}" if pd.notna(hcp) else "N/A"
+            rows.append(
+                html.Div([
+                    html.Span(p['name'], style={'fontWeight': '500', 'color': text_color}),
+                    html.Span(hcp_text, style={'float': 'right', 'fontWeight': 'bold', 'color': text_color})
+                ], style={'padding': '10px 5px', 'borderBottom': f'1px solid {border_color}33'})
+            )
+        body = rows
+    else:
+        body = [html.P("No players assigned yet", className='text-muted mb-0')]
+
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H4(f"{team_name} Team ({len(players)})", className='mb-0', style={'color': 'dark-green', 'fontWeight': 'bold'})
+        ], style={'backgroundColor': header_bg_color, 'color': 'dark-green'}),
+        dbc.CardBody(body, style={'backgroundColor': card_bg_color})
+    ],
+    style={
+        'border': f'3px solid {border_color}',
+        'marginBottom': '20px',
+        'boxShadow': '0 4px 8px rgba(0,0,0,0.1)',
+        'transition': 'transform 0.2s ease-in-out',
+        'backgroundColor': card_bg_color
+    },
+    className="match-card")
+
+
 # ============ Page 9: Edit Matches ============
 def create_edit_matches_page():
     return html.Div([
@@ -1196,6 +1301,8 @@ def create_edit_matches_page():
 def display_page(pathname):
     if pathname == '/matches':
         return create_matches_page()
+    elif pathname == '/teams':
+        return create_teams_page()
     elif pathname == '/player-details':
         return create_player_details_page()
     elif pathname == '/manage-players':
@@ -1460,43 +1567,6 @@ def update_player_details(player):
     course_perf = data_service.get_player_course_performance(player)
 
     # Fourball partner performance
-    # fourball_matches = player_matches[player_matches['MatchType'] == 'Fourball'].copy()
-    # partner_stats = []
-    # partners = set()
-
-    # for _, row in fourball_matches.iterrows():
-    #     if row['Player_Team'] == 'Blue':
-    #         partner = row['BluePlayer2'] if row['BluePlayer1'] == player else row['BluePlayer1']
-    #     else:
-    #         partner = row['RedPlayer2'] if row['RedPlayer1'] == player else row['RedPlayer1']
-    #     if pd.notna(partner) and partner not in ['N/A', 'Ghost', '']:
-    #         partners.add(partner)
-
-    # for partner in partners:
-    #     partner_matches = fourball_matches[
-    #         ((fourball_matches['BluePlayer1'] == player) & (fourball_matches['BluePlayer2'] == partner)) |
-    #         ((fourball_matches['BluePlayer2'] == player) & (fourball_matches['BluePlayer1'] == partner)) |
-    #         ((fourball_matches['RedPlayer1'] == player) & (fourball_matches['RedPlayer2'] == partner)) |
-    #         ((fourball_matches['RedPlayer2'] == player) & (fourball_matches['RedPlayer1'] == partner))
-    #     ]
-    #     if len(partner_matches) > 0:
-    #         p_stats = partner_matches['Outcome'].value_counts().to_dict()
-    #         p_wins = p_stats.get('Win', 0)
-    #         p_halves = p_stats.get('Half', 0)
-    #         p_losses = p_stats.get('Loss', 0)
-    #         p_points = p_wins + (p_halves * 0.5)
-    #         ppg = p_points / len(partner_matches)
-    #         partner_stats.append({
-    #             'Partner': partner,
-    #             'Matches': len(partner_matches),
-    #             'Wins': p_wins,
-    #             'Halves': p_halves,
-    #             'Losses': p_losses,
-    #             'Points': p_points,
-    #             'PPG': round(ppg, 2)
-    #         })
-
-    # partner_stats_df = pd.DataFrame(partner_stats).sort_values('PPG', ascending=False) if partner_stats else pd.DataFrame()
     partner_stats_df = data_service.get_partner_performace(player)
 
     # Opponent performance
@@ -1606,6 +1676,24 @@ def update_head_to_head(player1, player2):
 
 # ============ Player Management Callbacks ============
 
+# Pre-fill handicap and team when a player/year is selected, and refresh after save/delete
+@app.callback(
+    [Output('manage-player-handicap', 'value'),
+     Output('manage-player-team', 'value')],
+    [Input('manage-player-dropdown', 'value'),
+     Input('manage-player-year', 'value'),
+     Input('btn-update-player', 'n_clicks'),
+     Input('btn-delete-handicap', 'n_clicks'),
+     Input('btn-delete-team', 'n_clicks')]
+)
+def prefill_player_handicap_and_team(player, year, update_clicks, delete_hcp_clicks, delete_team_clicks):
+    if not player or not year:
+        return None, None
+    handicap = db_service.get_player_handicap(player, year)
+    team = db_service.get_player_team_assignment(player, year)
+    return handicap, team
+
+
 # Add new player
 @app.callback(
     Output('alert-container', 'children', allow_duplicate=True),
@@ -1645,18 +1733,23 @@ def add_new_player(n_clicks, name, year, handicap):
                        color="success", dismissable=True, duration=4000)
 
 
-# Update handicap
+# Update handicap and/or team together
 @app.callback(
     Output('alert-container', 'children', allow_duplicate=True),
-    Input('btn-update-handicap', 'n_clicks'),
+    Input('btn-update-player', 'n_clicks'),
     [State('manage-player-dropdown', 'value'),
      State('manage-player-year', 'value'),
-     State('manage-player-handicap', 'value')],
+     State('manage-player-handicap', 'value'),
+     State('manage-player-team', 'value')],
     prevent_initial_call=True
 )
-def update_player_handicap(n_clicks, player, year, handicap):
-    if not n_clicks or not player or not year or handicap is None:
-        return dbc.Alert("Please select player, year, and enter handicap",
+def update_player_handicap_and_team(n_clicks, player, year, handicap, team):
+    if not n_clicks or not player or not year:
+        return dbc.Alert("Please select player and year",
+                       color="danger", dismissable=True, duration=4000)
+
+    if handicap is None and not team:
+        return dbc.Alert("Enter a handicap and/or select a team to save",
                        color="danger", dismissable=True, duration=4000)
 
     # Check admin access
@@ -1664,12 +1757,29 @@ def update_player_handicap(n_clicks, player, year, handicap):
     if not has_access:
         return error_alert
 
-    success = db_service.add_or_update_handicap(player, year, handicap)
-    if success:
-        data_service.invalidate_cache()
-        return dbc.Alert(f"Handicap updated: {player} - {year} - {handicap}",
+    updates = []
+    failures = []
+
+    if handicap is not None:
+        if db_service.add_or_update_handicap(player, year, handicap):
+            data_service.invalidate_cache()
+            updates.append(f"handicap {handicap}")
+        else:
+            failures.append("handicap")
+
+    if team:
+        if db_service.assign_player_team(player, year, team):
+            updates.append(f"{team} team")
+        else:
+            failures.append("team")
+
+    if updates and not failures:
+        return dbc.Alert(f"Updated {player} - {year}: {', '.join(updates)}",
                        color="success", dismissable=True, duration=4000)
-    return dbc.Alert("Failed to update handicap", color="danger", dismissable=True, duration=4000)
+    elif updates and failures:
+        return dbc.Alert(f"Partially updated {player} - {year}: {', '.join(updates)} saved, {', '.join(failures)} failed",
+                       color="warning", dismissable=True, duration=5000)
+    return dbc.Alert("Failed to save changes", color="danger", dismissable=True, duration=4000)
 
 
 # Delete handicap
@@ -1698,18 +1808,52 @@ def delete_player_handicap(n_clicks, player, year):
     return dbc.Alert("Failed to delete handicap", color="danger", dismissable=True, duration=4000)
 
 
+# Remove team assignment
+@app.callback(
+    Output('alert-container', 'children', allow_duplicate=True),
+    Input('btn-delete-team', 'n_clicks'),
+    [State('manage-player-dropdown', 'value'),
+     State('manage-player-year', 'value')],
+    prevent_initial_call=True
+)
+def delete_player_team(n_clicks, player, year):
+    if not n_clicks or not player or not year:
+        return dbc.Alert("Please select player and year",
+                       color="danger", dismissable=True, duration=4000)
+
+    # Check admin access
+    has_access, error_alert = check_admin_access()
+    if not has_access:
+        return error_alert
+
+    success = db_service.delete_player_team(player, year)
+    if success:
+        return dbc.Alert(f"Team assignment removed: {player} - {year}",
+                       color="success", dismissable=True, duration=4000)
+    return dbc.Alert("Failed to remove team assignment", color="danger", dismissable=True, duration=4000)
+
+
 # Display player handicaps
 @app.callback(
     Output('player-handicaps-display', 'children'),
-    Input('url', 'pathname')
+    [Input('url', 'pathname'),
+     Input('btn-add-player', 'n_clicks'),
+     Input('btn-update-player', 'n_clicks'),
+     Input('btn-delete-handicap', 'n_clicks'),
+     Input('btn-delete-team', 'n_clicks')]
 )
-def display_player_handicaps(pathname):
+def display_player_handicaps(pathname, add_clicks, update_clicks, delete_hcp_clicks, delete_team_clicks):
     if pathname != '/manage-players':
         return None
 
     players = db_service.get_all_players_with_handicaps()
     if not players:
         return dbc.Alert("No players found", color="info")
+
+    current_year = date.today().year
+    team_by_player = {
+        a['name']: a['team'] for a in db_service.get_team_assignments_by_year(current_year)
+    }
 
     cards = []
     for player in players:
@@ -1719,10 +1863,18 @@ def display_player_handicaps(pathname):
         else:
             handicap_text = "No handicaps recorded"
 
+        title_children = [player['name']]
+        team = team_by_player.get(player['name'])
+        if team:
+            badge_color = '#1976d2' if team == 'Blue' else '#d32f2f'
+            title_children.append(
+                dbc.Badge(f"{team} Team ({current_year})", style={'backgroundColor': badge_color, 'marginLeft': '10px'})
+            )
+
         cards.append(
             dbc.Card([
                 dbc.CardBody([
-                    html.H5(player['name'], className='card-title'),
+                    html.H5(title_children, className='card-title'),
                     html.P(f"Handicaps: {handicap_text}", className='card-text')
                 ])
             ], className='mb-2')
@@ -1928,6 +2080,35 @@ def update_matches_display(year_filter):
         )
     
     return html.Div(year_sections)
+
+
+# ============ Teams Display Callbacks ============
+
+# Filter teams by year
+@app.callback(
+    Output('teams-display-container', 'children'),
+    Input('teams-year-filter', 'value')
+)
+def update_teams_display(year):
+    """Update team roster display based on selected year"""
+    if not year:
+        return dbc.Alert("Select a year to view teams", color="info", className="text-center")
+
+    assignments = db_service.get_team_assignments_by_year(year)
+
+    if not assignments:
+        return dbc.Alert(
+            f"No team assignments recorded for {year} yet. Assign players to Red/Blue on the Manage Players page.",
+            color="info", className="text-center"
+        )
+
+    blue_players = [p for p in assignments if p['team'] == 'Blue']
+    red_players = [p for p in assignments if p['team'] == 'Red']
+
+    return dbc.Row([
+        dbc.Col([create_team_roster_card('Blue', blue_players)], width=6),
+        dbc.Col([create_team_roster_card('Red', red_players)], width=6),
+    ])
 
 
 # ============ Edit Matches Callbacks ============
