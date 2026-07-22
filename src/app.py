@@ -1109,30 +1109,33 @@ def create_match_row(match):
         html.Div([
             html.Div(name, style={'fontWeight': 'bold' if blue_won else 'normal'})
             for name in blue_names
-        ], style={'textAlign': 'right'})
-    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end', 'gap': '12px'})
+        ], style={'textAlign': 'right', 'minWidth': 0})
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end', 'gap': '8px',
+              'flex': '1 1 0', 'minWidth': 0})
 
     red_side = html.Div([
         html.Div([
             html.Div(name, style={'fontWeight': 'bold' if red_won else 'normal'})
             for name in red_names
-        ], style={'textAlign': 'left'}),
+        ], style={'textAlign': 'left', 'minWidth': 0}),
         score_badge('#d32f2f') if (red_won and has_score) else spacer()
-    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '12px'})
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '8px',
+              'flex': '1 1 0', 'minWidth': 0})
 
     center = html.Div('F' if decided else 'vs', style={
         'backgroundColor': '#616161' if decided else '#9e9e9e', 'color': 'white', 'fontWeight': 'bold',
-        'padding': '6px 14px', 'borderRadius': '4px', 'display': 'inline-block'
+        'padding': '6px 10px', 'borderRadius': '4px', 'flex': '0 0 auto', 'margin': '0 8px'
     })
 
-    return dbc.Row([
-        dbc.Col(blue_side, width=12, md=5, className='mb-2 mb-md-0'),
-        dbc.Col(center, width=12, md=2, className='text-center mb-2 mb-md-0'),
-        dbc.Col(red_side, width=12, md=5),
-    ], align='center', className='py-3 px-2 g-2', style={
+    return html.Div([blue_side, center, red_side], style={
+        'display': 'flex',
+        'flexWrap': 'nowrap',
+        'alignItems': 'center',
         'backgroundColor': row_bg,
         'borderLeft': f'4px solid {row_border}',
-        'marginBottom': '2px'
+        'marginBottom': '2px',
+        'padding': '12px 8px',
+        'fontSize': '0.9rem'
     })
 
 
