@@ -205,6 +205,37 @@ class SQLiteDatabaseService(DatabaseServiceBase):
             result = c.fetchone()[0]
             return (result + 1) if result else 1
 
+    def update_matches_course(self, year: int, days: List[int], course: str) -> int:
+        """Update the Course for all matches in the given year and days. Returns count updated."""
+        if not days:
+            return 0
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            placeholders = ','.join('?' * len(days))
+            c.execute(f'''
+                UPDATE matches
+                SET Course = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE Year = ? AND Day IN ({placeholders})
+            ''', (course, year, *days))
+            return c.rowcount
+
+    def update_match_handicaps(self, year: int, day: int, match_number: int,
+                              blue_player1_handicap: float, blue_player2_handicap: Optional[float],
+                              red_player1_handicap: float, red_player2_handicap: Optional[float]) -> bool:
+        """Update the match handicap fields for an existing match"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                UPDATE matches
+                SET BluePlayer1MatchHandicap = ?, BluePlayer2MatchHandicap = ?,
+                    RedPlayer1MatchHandicap = ?, RedPlayer2MatchHandicap = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE Year = ? AND Day = ? AND MatchNumber = ?
+            ''', (blue_player1_handicap, blue_player2_handicap or 0,
+                  red_player1_handicap, red_player2_handicap or 0,
+                  year, day, match_number))
+            return c.rowcount > 0
+
     # ============ Player Operations ============
 
     def _add_player_if_not_exists(self, name: str, conn: sqlite3.Connection):

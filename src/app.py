@@ -1245,6 +1245,50 @@ def create_edit_matches_page():
     return html.Div([
         html.H2("Edit Match Results"),
 
+        # Bulk Admin Actions
+        dbc.Card([
+            dbc.CardBody([
+                html.H4("Bulk Admin Actions", className='mb-3'),
+                dbc.Row([
+                    dbc.Col([
+                        html.H6("Update Course for Year/Day"),
+                        dbc.Label("Year"),
+                        dcc.Dropdown(
+                            id='bulk-course-year',
+                            options=[{'label': str(year), 'value': year} for year in db_service.get_years_list()],
+                            placeholder='Select year'
+                        ),
+                        dbc.Label("Day(s)", className='mt-2'),
+                        dcc.Dropdown(id='bulk-course-days', options=[], multi=True, placeholder='Select day(s)'),
+                        dbc.Label("New Course", className='mt-2'),
+                        dcc.Dropdown(
+                            id='bulk-course-select',
+                            options=[{'label': c['name'], 'value': c['name']} for c in db_service.get_all_courses()],
+                            placeholder='Select course'
+                        ),
+                        dbc.Button("Update Course", id='btn-bulk-update-course', color='primary', className='mt-3')
+                    ], width=6),
+                    dbc.Col([
+                        html.H6("Reload Match Handicaps for Year/Day"),
+                        dbc.Label("Year"),
+                        dcc.Dropdown(
+                            id='bulk-hcp-year',
+                            options=[{'label': str(year), 'value': year} for year in db_service.get_years_list()],
+                            placeholder='Select year'
+                        ),
+                        dbc.Label("Day(s)", className='mt-2'),
+                        dcc.Dropdown(id='bulk-hcp-days', options=[], multi=True, placeholder='Select day(s)'),
+                        html.P(
+                            "Recalculates each match's handicaps from each player's current Handicap "
+                            "Index and the course's current slope/par, then overwrites the stored values.",
+                            className='text-muted mt-2', style={'fontSize': '0.85rem'}
+                        ),
+                        dbc.Button("Reload Handicaps", id='btn-bulk-reload-handicaps', color='warning', className='mt-3')
+                    ], width=6),
+                ])
+            ])
+        ], className='shadow mb-4'),
+
         # Filter Section
         dbc.Card([
             dbc.CardBody([
@@ -1320,7 +1364,8 @@ def create_edit_matches_page():
         ], id='edit-match-modal', is_open=False, size='lg'),
 
         # Hidden div to store selected match info
-        html.Div(id='selected-match-store', style={'display': 'none'})
+        html.Div(id='selected-match-store', style={'display': 'none'}),
+        dcc.Store(id='edit-table-refresh-trigger', data=0)
     ])
 
 
@@ -2252,9 +2297,10 @@ def update_teams_display(year):
 # Display matches table with edit buttons
 @app.callback(
     Output('edit-matches-table-container', 'children'),
-    Input('edit-match-year-filter', 'value')
+    [Input('edit-match-year-filter', 'value'),
+     Input('edit-table-refresh-trigger', 'data')]
 )
-def display_matches_for_edit(year_filter):
+def display_matches_for_edit(year_filter, _refresh):
     if year_filter == 'all':
         matches = db_service.get_all_matches()
     else:
@@ -2303,6 +2349,153 @@ def display_matches_for_edit(year_filter):
         sort_action='native',
         filter_action='native'
     )
+
+
+# Populate day options for bulk-action dropdowns based on the selected year
+@app.callback(Output('bulk-course-days', 'options'), Input('bulk-course-year', 'value'))
+def update_bulk_course_days_options(year):
+    if not year:
+        return []
+    days = sorted(db_service.get_matches_by_year(year)['Day'].unique().tolist())
+    return [{'label': f'Day {d}', 'value': d} for d in days]
+
+
+@app.callback(Output('bulk-hcp-days', 'options'), Input('bulk-hcp-year', 'value'))
+def update_bulk_hcp_days_options(year):
+    if not year:
+        return []
+    days = sorted(db_service.get_matches_by_year(year)['Day'].unique().tolist())
+    return [{'label': f'Day {d}', 'value': d} for d in days]
+
+
+def _recompute_match_handicaps(year, course_name, match_type, blue_p1, blue_p2, red_p1, red_p2):
+    """Recompute a match's handicaps from current player Handicap Index and course rating/slope.
+    Returns (blue1, blue2, red1, red2) or None if required data is missing."""
+    course_info = db_service.get_course(course_name)
+    if not course_info:
+        return None
+
+    blue_p1_index = db_service.get_player_handicap(blue_p1, year)
+    red_p1_index = db_service.get_player_handicap(red_p1, year)
+    if blue_p1_index is None or red_p1_index is None:
+        return None
+
+    if match_type == 'Single':
+        handicaps = HandicapCalculator.calculate_match_handicaps(
+            match_type='Single',
+            handicap_index_p1=blue_p1_index, handicap_index_p2=None,
+            handicap_index_p3=red_p1_index, handicap_index_p4=None,
+            slope_rating=course_info['slope_rating'], par=course_info['par']
+        )
+        return handicaps[0], 0, handicaps[1], 0
+
+    elif match_type == 'Fourball':
+        if pd.isna(blue_p2) or blue_p2 in ['N/A', 'Ghost', ''] or \
+           pd.isna(red_p2) or red_p2 in ['N/A', 'Ghost', '']:
+            return None
+
+        blue_p2_index = db_service.get_player_handicap(blue_p2, year)
+        red_p2_index = db_service.get_player_handicap(red_p2, year)
+        if blue_p2_index is None or red_p2_index is None:
+            return None
+
+        return HandicapCalculator.calculate_match_handicaps(
+            match_type='Fourball',
+            handicap_index_p1=blue_p1_index, handicap_index_p2=blue_p2_index,
+            handicap_index_p3=red_p1_index, handicap_index_p4=red_p2_index,
+            slope_rating=course_info['slope_rating'], par=course_info['par']
+        )
+
+    return None
+
+
+# Bulk update course for year/day(s)
+@app.callback(
+    [Output('alert-container', 'children', allow_duplicate=True),
+     Output('edit-table-refresh-trigger', 'data', allow_duplicate=True)],
+    Input('btn-bulk-update-course', 'n_clicks'),
+    [State('bulk-course-year', 'value'),
+     State('bulk-course-days', 'value'),
+     State('bulk-course-select', 'value'),
+     State('edit-table-refresh-trigger', 'data')],
+    prevent_initial_call=True
+)
+def bulk_update_course(n_clicks, year, days, course, refresh_count):
+    has_access, error_alert = check_admin_access()
+    if not has_access:
+        return error_alert, dash.no_update
+
+    if not year or not days or not course:
+        return dbc.Alert("Select a year, at least one day, and a course", color="danger",
+                          dismissable=True, duration=4000), dash.no_update
+
+    updated = db_service.update_matches_course(year, days, course)
+    data_service.invalidate_cache()
+
+    if updated:
+        alert = dbc.Alert(f"Updated course to '{course}' on {updated} match(es) for {year}, "
+                           f"day(s) {', '.join(map(str, sorted(days)))}.",
+                           color="success", dismissable=True, duration=5000)
+    else:
+        alert = dbc.Alert("No matches found for the selected year/day(s).", color="info",
+                           dismissable=True, duration=4000)
+
+    return alert, (refresh_count or 0) + 1
+
+
+# Bulk reload match handicaps for year/day(s)
+@app.callback(
+    [Output('alert-container', 'children', allow_duplicate=True),
+     Output('edit-table-refresh-trigger', 'data', allow_duplicate=True)],
+    Input('btn-bulk-reload-handicaps', 'n_clicks'),
+    [State('bulk-hcp-year', 'value'),
+     State('bulk-hcp-days', 'value'),
+     State('edit-table-refresh-trigger', 'data')],
+    prevent_initial_call=True
+)
+def bulk_reload_handicaps(n_clicks, year, days, refresh_count):
+    has_access, error_alert = check_admin_access()
+    if not has_access:
+        return error_alert, dash.no_update
+
+    if not year or not days:
+        return dbc.Alert("Select a year and at least one day", color="danger",
+                          dismissable=True, duration=4000), dash.no_update
+
+    matches_df = db_service.get_matches_by_year(year)
+    matches_df = matches_df[matches_df['Day'].isin(days)]
+
+    if matches_df.empty:
+        return dbc.Alert("No matches found for the selected year/day(s).", color="info",
+                          dismissable=True, duration=4000), dash.no_update
+
+    updated = 0
+    skipped = []
+    for _, match in matches_df.iterrows():
+        result = _recompute_match_handicaps(
+            year, match['Course'], match['MatchType'],
+            match['BluePlayer1'], match.get('BluePlayer2'),
+            match['RedPlayer1'], match.get('RedPlayer2')
+        )
+        if result is None:
+            skipped.append(f"Day {match['Day']} Match {match['MatchNumber']}")
+            continue
+
+        blue1, blue2, red1, red2 = result
+        db_service.update_match_handicaps(
+            int(match['Year']), int(match['Day']), int(match['MatchNumber']),
+            blue1, blue2, red1, red2
+        )
+        updated += 1
+
+    data_service.invalidate_cache()
+
+    msg = f"Reloaded handicaps for {updated} match(es)."
+    if skipped:
+        msg += f" Skipped {len(skipped)} (missing player Handicap Index or course data): {', '.join(skipped)}"
+
+    alert = dbc.Alert(msg, color="success" if updated else "warning", dismissable=True, duration=8000)
+    return alert, (refresh_count or 0) + 1
 
 
 # Open edit modal
