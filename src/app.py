@@ -679,6 +679,8 @@ def create_player_details_page():
                 {'name': 'Result', 'id': 'Result'},
                 {'name': 'Score', 'id': 'Score'},
                 {'name': 'Player Team', 'id': 'Player_Team'},
+                {'name': 'Partner', 'id': 'Partner'},
+                {'name': 'Opponent', 'id': 'Opponent'},
                 {'name': 'Outcome', 'id': 'Outcome'}
             ],
             style_table={'overflowX': 'auto'},
@@ -1622,6 +1624,27 @@ def update_player_details(player):
         else ('Loss' if row['Result'] != 'Half' else 'Half'), axis=1
     )
 
+    def get_partner(row):
+        if row['Player_Team'] == 'Blue':
+            p1, p2 = row['BluePlayer1'], row['BluePlayer2']
+        else:
+            p1, p2 = row['RedPlayer1'], row['RedPlayer2']
+        partner = p2 if p1 == player else p1
+        if pd.isna(partner) or partner in ['N/A', 'Ghost', '']:
+            return ''
+        return partner
+
+    def get_opponent(row):
+        if row['Player_Team'] == 'Blue':
+            o1, o2 = row['RedPlayer1'], row['RedPlayer2']
+        else:
+            o1, o2 = row['BluePlayer1'], row['BluePlayer2']
+        opponents = [o for o in [o1, o2] if pd.notna(o) and o not in ['N/A', 'Ghost', '']]
+        return ' & '.join(opponents)
+
+    player_matches['Partner'] = player_matches.apply(get_partner, axis=1)
+    player_matches['Opponent'] = player_matches.apply(get_opponent, axis=1)
+
     # Points per year chart
     yearly_points = player_matches.groupby('Year')['Outcome'].value_counts().unstack(fill_value=0)
     yearly_points['Points'] = yearly_points.get('Win', 0) + (yearly_points.get('Half', 0) * 0.5)
@@ -1651,6 +1674,7 @@ def update_player_details(player):
         title=f"{player}'s Points per Year",
         xaxis_title="Year"
     )
+    fig.update_xaxes(tickmode='linear', dtick=1)
     fig.update_yaxes(
         title_text="Points", secondary_y=False,
         range=[0, max(yearly_points['Points']) + 1] if len(yearly_points) > 0 else None
@@ -1723,7 +1747,8 @@ def update_player_details(player):
         f"Win Percentage: {win_pct:.1f}%",
         fig,
         player_matches[['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
-                       'Result', 'Score', 'Player_Team', 'Outcome']].to_dict('records'),
+                       'Result', 'Score', 'Player_Team', 'Partner', 'Opponent',
+                       'Outcome']].to_dict('records'),
         partner_stats_df.to_dict('records') if not partner_stats_df.empty else [],
         opponent_stats_df.to_dict('records') if not opponent_stats_df.empty else [],
         course_perf.to_dict('records')
