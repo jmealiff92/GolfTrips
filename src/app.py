@@ -2240,16 +2240,23 @@ def update_matches_display(year_filter):
                 rows = [create_match_row(match) for _, match in group_matches.iterrows()]
 
                 courses = [c for c in group_matches['Course'].dropna().unique() if c not in ['', 'N/A']]
-                banner_text = f"Day {day} – {match_type}"
+
+                header_children = [
+                    html.H5(f"Day {day} – {match_type}", className='mb-0 text-center',
+                            style={'fontWeight': 'bold', 'letterSpacing': '1px',
+                                   'textTransform': 'uppercase', 'color': 'white'})
+                ]
                 if courses:
-                    banner_text += f" – {' / '.join(courses)}"
+                    header_children.append(
+                        html.Div(' / '.join(courses), className='text-center',
+                                 style={'fontSize': '0.8rem', 'letterSpacing': '1px',
+                                        'textTransform': 'uppercase', 'color': '#adb5bd'})
+                    )
 
                 group_cards.append(
                     dbc.Card([
                         dbc.CardHeader(
-                            html.H5(banner_text, className='mb-0 text-center',
-                                    style={'fontWeight': 'bold', 'letterSpacing': '1px',
-                                           'textTransform': 'uppercase', 'color': 'white'}),
+                            header_children,
                             style={'background': '#212529'}
                         ),
                         dbc.CardBody(rows + [create_group_score_bar(blue_points, red_points)])
