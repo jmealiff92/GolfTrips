@@ -1060,94 +1060,100 @@ def create_matches_page():
     ])
 
 
-def create_match_card(match, show_year=True):
-    """Helper function to create a match card"""
-    # Determine card color based on result
+def _format_handicap_suffix(handicap):
+    """Format a match handicap as a bracketed suffix, e.g. ' (5)'. Returns '' if not available."""
+    if handicap is None or pd.isna(handicap):
+        return ''
+    return f" ({int(round(float(handicap)))})"
+
+
+def _player_display_name(name, handicap):
+    """Player name with their match handicap in brackets after it"""
+    return f"{name}{_format_handicap_suffix(handicap)}"
+
+
+def create_match_row(match):
+    """Create a single Sky Sports-style scoreboard row for a match"""
     result = match.get('Result', '')
-    if result == 'Blue':
-        card_bg_color = '#e3f2fd'  # Light blue background
-        border_color = '#1976d2'   # Darker blue border
-        header_bg_color = '#1976d2'  # Blue header
-        text_color = '#0d47a1'     # Dark blue text
-    elif result == 'Red':
-        card_bg_color = '#ffebee'  # Light red background
-        border_color = '#d32f2f'   # Darker red border
-        header_bg_color = '#d32f2f'  # Red header
-        text_color = '#c62828'     # Dark red text
-    elif result == 'Half':
-        card_bg_color = '#f5f5f5'  # Light grey background
-        border_color = '#616161'   # Darker grey border
-        header_bg_color = '#616161'  # Grey header
-        text_color = '#424242'     # Dark grey text
-    else:  # TBD or empty
-        card_bg_color = '#fafafa'  # Very light grey background
-        border_color = '#9e9e9e'   # Light grey border
-        header_bg_color = '#9e9e9e'  # Light grey header
-        text_color = '#757575'     # Medium grey text
-    
-    # Format team information with sorted names
-    blue_players = [match['BluePlayer1']]
+    blue_won = result == 'Blue'
+    red_won = result == 'Red'
+    halved = result == 'Half'
+    decided = bool(result)
+
+    blue_names = [_player_display_name(match['BluePlayer1'], match.get('BluePlayer1MatchHandicap'))]
     if pd.notna(match.get('BluePlayer2')) and match['BluePlayer2'] not in ['N/A', 'Ghost', '']:
-        blue_players.append(match['BluePlayer2'])
-    blue_team = " & ".join(sorted(blue_players))
-    
-    red_players = [match['RedPlayer1']]
+        blue_names.append(_player_display_name(match['BluePlayer2'], match.get('BluePlayer2MatchHandicap')))
+
+    red_names = [_player_display_name(match['RedPlayer1'], match.get('RedPlayer1MatchHandicap'))]
     if pd.notna(match.get('RedPlayer2')) and match['RedPlayer2'] not in ['N/A', 'Ghost', '']:
-        red_players.append(match['RedPlayer2'])
-    red_team = " & ".join(sorted(red_players))
-    
-    # Format score
+        red_names.append(_player_display_name(match['RedPlayer2'], match.get('RedPlayer2MatchHandicap')))
+
     score = match.get('Score', '')
-    if not score or score in ['N/A', '']:
-        score = 'TBD'
-    
-    # Create header title
-    if show_year:
-        header_title = f"Year {match['Year']} - Match {match['MatchNumber']}"
-    else:
-        header_title = f"Match {match['MatchNumber']}"
-    
-    # Create the card
-    return dbc.Card([
-        dbc.CardHeader([
-            html.H5(header_title, className="mb-0", style={'color': 'dark-green', 'fontWeight': 'bold'})
-        ], style={'backgroundColor': header_bg_color, 'color': 'dark-green'}),
-        dbc.CardBody([
-            html.H6(f"🏌️ {match['Course']}", className="card-title"),
-            html.P(f"📅 {match['MatchType']} Match", className="card-text"),
-            html.Hr(),
-            html.Div([
-                html.Div([
-                    html.Strong("Blue Team:", style={'color': '#1976d2'}),
-                    html.Br(),
-                    html.Span(blue_team)
-                ], style={'textAlign': 'left', 'display': 'inline-block', 'width': '45%'}),
-                html.Div([
-                    html.Strong("Red Team:", style={'color': '#d32f2f'}),
-                    html.Br(),
-                    html.Span(red_team)
-                ], style={'textAlign': 'right', 'display': 'inline-block', 'width': '45%'})
-            ]),
-            html.Hr(),
-            html.Div([
-                html.Strong("Result: "),
-                html.Span(result if result else 'TBD', 
-                         style={'fontWeight': 'bold', 'color': text_color})
-            ], style={'textAlign': 'center'}),
-            html.Div([
-                html.Strong("Score: "),
-                html.Span(score, style={'fontWeight': 'bold', 'color': text_color})
-            ], style={'textAlign': 'center', 'marginTop': '10px'})
-        ], style={'backgroundColor': card_bg_color})
-    ], 
-    style={
-        'border': f'3px solid {border_color}',
-        'marginBottom': '20px',
-        'boxShadow': f'0 4px 8px rgba(0,0,0,0.1)',
-        'transition': 'transform 0.2s ease-in-out',
-        'backgroundColor': card_bg_color
-    },
-    className="match-card")
+    has_score = bool(score) and score not in ['N/A', '']
+
+    row_bg = '#e3f2fd' if blue_won else '#ffebee' if red_won else '#f5f5f5' if halved else '#ffffff'
+    row_border = '#1976d2' if blue_won else '#d32f2f' if red_won else '#9e9e9e'
+
+    def score_badge(color):
+        return html.Div(score, style={
+            'backgroundColor': color, 'color': 'white', 'fontWeight': 'bold',
+            'padding': '6px 10px', 'borderRadius': '4px', 'minWidth': '55px',
+            'textAlign': 'center', 'fontSize': '0.9rem'
+        })
+
+    def spacer():
+        return html.Div(style={'minWidth': '55px'})
+
+    blue_side = html.Div([
+        score_badge('#1976d2') if (blue_won and has_score) else spacer(),
+        html.Div([
+            html.Div(name, style={'fontWeight': 'bold' if blue_won else 'normal'})
+            for name in blue_names
+        ], style={'textAlign': 'right', 'minWidth': 0})
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end', 'gap': '8px',
+              'flex': '1 1 0', 'minWidth': 0})
+
+    red_side = html.Div([
+        html.Div([
+            html.Div(name, style={'fontWeight': 'bold' if red_won else 'normal'})
+            for name in red_names
+        ], style={'textAlign': 'left', 'minWidth': 0}),
+        score_badge('#d32f2f') if (red_won and has_score) else spacer()
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '8px',
+              'flex': '1 1 0', 'minWidth': 0})
+
+    center = html.Div('F' if decided else 'vs', style={
+        'backgroundColor': '#616161' if decided else '#9e9e9e', 'color': 'white', 'fontWeight': 'bold',
+        'padding': '6px 10px', 'borderRadius': '4px', 'flex': '0 0 auto', 'margin': '0 8px'
+    })
+
+    return html.Div([blue_side, center, red_side], style={
+        'display': 'flex',
+        'flexWrap': 'nowrap',
+        'alignItems': 'center',
+        'backgroundColor': row_bg,
+        'borderLeft': f'4px solid {row_border}',
+        'marginBottom': '2px',
+        'padding': '12px 8px',
+        'fontSize': '0.9rem'
+    })
+
+
+def create_group_score_bar(blue_points, red_points):
+    """Create the overall Blue vs Red points bar shown under a day/match-type group"""
+    total = blue_points + red_points
+    blue_pct = (blue_points / total * 100) if total else 50
+    red_pct = 100 - blue_pct
+    return html.Div([
+        html.Div(f"{blue_points:g}", style={
+            'backgroundColor': '#1976d2', 'color': 'white', 'fontWeight': 'bold',
+            'fontSize': '1.3rem', 'padding': '10px', 'width': f'{blue_pct}%', 'textAlign': 'center'
+        }),
+        html.Div(f"{red_points:g}", style={
+            'backgroundColor': '#d32f2f', 'color': 'white', 'fontWeight': 'bold',
+            'fontSize': '1.3rem', 'padding': '10px', 'width': f'{red_pct}%', 'textAlign': 'center'
+        }),
+    ], style={'display': 'flex', 'borderRadius': '4px', 'overflow': 'hidden', 'marginTop': '12px'})
 
 
 # ============ Page: Teams ============
@@ -2137,36 +2143,53 @@ def update_matches_display(year_filter):
     
     # Sort matches by year, day, and match number
     matches_df = matches_df.sort_values(['Year', 'Day', 'MatchNumber'])
-    
-    # Group matches by year and day for better organization
+
+    # Group matches by year, then by day, then by match type for better organization
     years = sorted(matches_df['Year'].unique(), reverse=True)
-    
+
     year_sections = []
     for year in years:
         year_matches = matches_df[matches_df['Year'] == year]
         days = sorted(year_matches['Day'].unique())
-        
+
         day_sections = []
         for day in days:
             day_matches = year_matches[year_matches['Day'] == day]
-            day_cards = [create_match_card(match, show_year=False) for _, match in day_matches.iterrows()]
-            
-            day_sections.append(
-                html.Div([
-                    html.H3(f"Day {day}", style={'marginBottom': '15px', 'color': '#2e7d32', 'fontSize': '1.5rem'}),
-                    dbc.Row([
-                        dbc.Col(card, width=12, lg=6, xl=3) for card in day_cards
-                    ], className="g-3")
-                ], style={'marginBottom': '30px'})
-            )
-        
+            # Preserve the order match types first appear within the day
+            match_types = list(dict.fromkeys(day_matches['MatchType']))
+
+            group_cards = []
+            for match_type in match_types:
+                group_matches = day_matches[day_matches['MatchType'] == match_type].sort_values('MatchNumber')
+
+                blue_points = sum(1.0 if r == 'Blue' else 0.5 if r == 'Half' else 0.0
+                                   for r in group_matches['Result'])
+                red_points = sum(1.0 if r == 'Red' else 0.5 if r == 'Half' else 0.0
+                                  for r in group_matches['Result'])
+
+                rows = [create_match_row(match) for _, match in group_matches.iterrows()]
+
+                group_cards.append(
+                    dbc.Card([
+                        dbc.CardHeader(
+                            html.H5(f"Day {day} – {match_type}", className='mb-0 text-center',
+                                    style={'fontWeight': 'bold', 'letterSpacing': '1px',
+                                           'textTransform': 'uppercase', 'color': 'white'}),
+                            style={'background': '#212529'}
+                        ),
+                        dbc.CardBody(rows + [create_group_score_bar(blue_points, red_points)])
+                    ], className="shadow mb-4")
+                )
+
+            day_sections.append(html.Div(group_cards))
+
         year_sections.append(
             html.Div([
                 html.H2(f"Year {year}", style={'marginBottom': '25px', 'color': '#1b5e20', 'fontSize': '2rem', 'textAlign': 'center'}),
                 html.Div(day_sections)
             ], style={'marginBottom': '50px'})
         )
-    
+
     return html.Div(year_sections)
 
 
