@@ -2239,10 +2239,15 @@ def update_matches_display(year_filter):
 
                 rows = [create_match_row(match) for _, match in group_matches.iterrows()]
 
+                courses = [c for c in group_matches['Course'].dropna().unique() if c not in ['', 'N/A']]
+                banner_text = f"Day {day} – {match_type}"
+                if courses:
+                    banner_text += f" – {' / '.join(courses)}"
+
                 group_cards.append(
                     dbc.Card([
                         dbc.CardHeader(
-                            html.H5(f"Day {day} – {match_type}", className='mb-0 text-center',
+                            html.H5(banner_text, className='mb-0 text-center',
                                     style={'fontWeight': 'bold', 'letterSpacing': '1px',
                                            'textTransform': 'uppercase', 'color': 'white'}),
                             style={'background': '#212529'}
