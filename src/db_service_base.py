@@ -51,6 +51,16 @@ class DatabaseServiceBase(ABC):
     def get_next_match_number(self, year: int, day: int) -> int:
         pass
 
+    @abstractmethod
+    def update_matches_course(self, year: int, days: List[int], course: str) -> int:
+        pass
+
+    @abstractmethod
+    def update_match_handicaps(self, year: int, day: int, match_number: int,
+                              blue_player1_handicap: float, blue_player2_handicap: Optional[float],
+                              red_player1_handicap: float, red_player2_handicap: Optional[float]) -> bool:
+        pass
+
     # Player Operations
     @abstractmethod
     def add_player(self, name: str) -> bool:
