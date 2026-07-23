@@ -1112,7 +1112,7 @@ def create_match_row(match):
             html.Div(name, style={'fontWeight': 'bold' if blue_won else 'normal'})
             for name in blue_names
         ], style={'textAlign': 'right', 'minWidth': 0})
-    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end', 'gap': '8px',
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'space-between', 'gap': '8px',
               'flex': '1 1 0', 'minWidth': 0})
 
     red_side = html.Div([
@@ -1121,7 +1121,7 @@ def create_match_row(match):
             for name in red_names
         ], style={'textAlign': 'left', 'minWidth': 0}),
         score_badge('#d32f2f') if (red_won and has_score) else spacer()
-    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '8px',
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'space-between', 'gap': '8px',
               'flex': '1 1 0', 'minWidth': 0})
 
     center = html.Div('F' if decided else 'vs', style={
