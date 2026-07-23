@@ -2244,13 +2244,13 @@ def update_matches_display(year_filter):
                 header_children = [
                     html.H5(f"Day {day} – {match_type}", className='mb-0 text-center',
                             style={'fontWeight': 'bold', 'letterSpacing': '1px',
-                                   'textTransform': 'uppercase', 'color': 'white'})
+                                   'textTransform': 'uppercase', 'color': 'white', 'textAlign': 'center'})
                 ]
                 if courses:
                     header_children.append(
                         html.Div(' / '.join(courses), className='text-center',
                                  style={'fontSize': '0.8rem', 'letterSpacing': '1px',
-                                        'textTransform': 'uppercase', 'color': '#adb5bd'})
+                                        'textTransform': 'uppercase', 'color': '#adb5bd', 'textAlign': 'center'})
                     )
 
                 group_cards.append(
