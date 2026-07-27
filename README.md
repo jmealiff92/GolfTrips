@@ -133,7 +133,7 @@ python-dotenv>=1.0.0     # For environment configuration
 
 Install dependencies:
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Documentation

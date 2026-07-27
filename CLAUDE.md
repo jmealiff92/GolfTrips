@@ -13,7 +13,6 @@ Dependencies are managed with `uv` (see `uv.lock`, `pyproject.toml`, Python 3.13
 ```bash
 # Install dependencies
 uv sync
-# or: pip install -r requirements.txt
 
 # Run the app locally (dev server, http://localhost:8050)
 ./run.sh

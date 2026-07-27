@@ -5,16 +5,10 @@
 echo "🏌️  Starting Golf Match Analysis..."
 echo ""
 
-# Activate virtual environment if it exists
-if [ -d ".venv" ]; then
-    source .venv/bin/activate
-    echo "✓ Virtual environment activated"
-else
-    echo "⚠ Virtual environment not found. Creating one..."
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-fi
+# Ensure dependencies are installed and .venv is up to date
+uv sync
+source .venv/bin/activate
+echo "✓ Virtual environment ready"
 
 echo ""
 echo "Starting application..."
