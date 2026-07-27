@@ -13,7 +13,6 @@ Dependencies are managed with `uv` (see `uv.lock`, `pyproject.toml`, Python 3.13
 ```bash
 # Install dependencies
 uv sync
-# or: pip install -r requirements.txt
 
 # Run the app locally (dev server, http://localhost:8050)
 ./run.sh
@@ -90,3 +89,7 @@ Both implementations call `init_db()` on construction, creating tables (`players
 - `data/golf_trips.db` is the tracked SQLite database (checked into the repo); `data/matches.csv` is a historical backup. A `golf_trips.db` also exists at the repo root — the app reads `data/golf_trips.db` via `src/app.py`'s `db_path` construction, not the root copy.
 - `scripts/migrate_courses.py` and `scripts/migrate_data.py` are one-off/historical migration scripts (CSV → DB, backfilling courses table) rather than a repeatable migration system.
 - `docs/README.md`, `docs/QUICK_START.md`, and `scripts/run_app.sh` describe an older, pre-`src/`-reorg layout (`dash_app_new.py`, `main.py`, `FileLoader.py` at repo root) that no longer exists — treat `src/app.py` and the top-level `README.md`/`run.sh` as current.
+
+## Pull requests
+
+Every PR title must include `[render preview]` (e.g. `[render preview] Add interactive chat to Suggest Pairings`) so Render automatically spins up a preview environment for the branch.

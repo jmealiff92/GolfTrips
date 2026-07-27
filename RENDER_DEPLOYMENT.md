@@ -16,8 +16,8 @@ git push origin main
 4. Configure:
    - **Name**: `golf-trips`
    - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `./start_production.sh`
+   - **Build Command**: `pip install uv && uv sync`
+   - **Start Command**: `uv run ./start_production.sh`
    - **Instance Type**: `Free`
 
 ### 3. Set Environment Variables

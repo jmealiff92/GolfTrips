@@ -74,7 +74,7 @@ This guide will help you set up Google OAuth authentication for the Golf Trips a
 ### 6. Install Required Packages
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 The important new packages are:

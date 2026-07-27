@@ -31,7 +31,11 @@ class PairingSuggester:
         self.model = model or os.getenv('ANTHROPIC_MODEL', DEFAULT_MODEL)
 
     def suggest_pairings(self, team: str, year: int, available_players: list[str]) -> dict:
-        """Return {'team', 'year', 'pairings': [{'players': [a, b], 'rationale': str}, ...]}."""
+        """Return {'team', 'year', 'pairings': [...], 'conversation': [...]}.
+
+        `conversation` is the raw Anthropic message history for this exchange, so a caller can
+        hand it to `continue_conversation()` to keep discussing these pairings with full context.
+        """
         players = list(dict.fromkeys(available_players))  # de-dupe, keep order
         if len(players) < 2:
             raise PairingSuggestionError("Select at least 2 players to generate pairings.")
@@ -42,7 +46,7 @@ class PairingSuggester:
                 "Claude pairing suggestions aren't configured. Add ANTHROPIC_API_KEY to your .env file."
             )
 
-        prompt = self._build_prompt(team, year, players)
+        prompt = self._build_suggestion_prompt(team, year, players)
 
         try:
             client = anthropic.Anthropic(api_key=self.api_key)
@@ -53,34 +57,12 @@ class PairingSuggester:
         last_validation_error = None
 
         for _ in range(MAX_ATTEMPTS):
-            try:
-                response = client.messages.create(
-                    model=self.model,
-                    max_tokens=1500,
-                    messages=conversation,
-                )
-            except anthropic.AuthenticationError as e:
-                raise PairingSuggestionError(
-                    "Claude API rejected the configured API key. Check ANTHROPIC_API_KEY."
-                ) from e
-            except anthropic.RateLimitError as e:
-                raise PairingSuggestionError(
-                    "Claude API rate limit or usage quota reached. Try again later."
-                ) from e
-            except anthropic.APIConnectionError as e:
-                raise PairingSuggestionError(
-                    "Could not reach the Claude API. Check your network connection and try again."
-                ) from e
-            except anthropic.APIError as e:
-                raise PairingSuggestionError(f"Claude API returned an error: {e}") from e
-
-            text = "".join(
-                block.text for block in response.content if getattr(block, "type", None) == "text"
-            )
+            text = self._send(client, conversation)
 
             try:
                 pairings = self._parse_and_validate(text, players)
-                return {"team": team, "year": year, "pairings": pairings}
+                conversation.append({"role": "assistant", "content": text})
+                return {"team": team, "year": year, "pairings": pairings, "conversation": conversation}
             except ValueError as e:
                 last_validation_error = e
                 conversation.append({"role": "assistant", "content": text})
@@ -96,11 +78,57 @@ class PairingSuggester:
             f"Claude did not return a valid pairing set after retrying: {last_validation_error}"
         )
 
-    def _build_prompt(self, team: str, year: int, players: list[str]) -> str:
+    def continue_conversation(self, team: str, year: int, available_players: list[str],
+                               conversation: Optional[list[dict]], user_message: str) -> dict:
+        """Continue a chat about pairings; return {'reply': str, 'conversation': [...]}.
+
+        If `conversation` is empty (no suggestion has been generated yet), the stats/handicap
+        context is built locally at no API cost and bundled into this same request alongside the
+        user's message, rather than spent on a separate priming call.
+        """
+        if not self.api_key:
+            raise PairingSuggestionError(
+                "Claude pairing suggestions aren't configured. Add ANTHROPIC_API_KEY to your .env file."
+            )
+
+        user_message = (user_message or "").strip()
+        if not user_message:
+            raise PairingSuggestionError("Type a message before sending.")
+
+        if conversation:
+            conversation = list(conversation)
+            conversation.append({
+                "role": "user",
+                "content": (
+                    f"{user_message}\n\n(Reply conversationally in plain text - you do not need to output "
+                    "JSON for this unless explicitly asked to restate the full pairing list.)"
+                ),
+            })
+        else:
+            players = list(dict.fromkeys(available_players or []))
+            context = self._build_context_block(team, year, players)
+            seed = f"""{context}
+The admin has not generated a formatted pairing list yet. Answer their question or discuss pairing \
+ideas conversationally in plain text, using the data above. They can click "Suggest Pairings" \
+separately if they want a full formatted list.
+
+Admin: {user_message}"""
+            conversation = [{"role": "user", "content": seed}]
+
+        try:
+            client = anthropic.Anthropic(api_key=self.api_key)
+        except Exception as e:
+            raise PairingSuggestionError(f"Could not initialize the Claude client: {e}") from e
+
+        reply = self._send(client, conversation)
+        conversation.append({"role": "assistant", "content": reply})
+        return {"reply": reply, "conversation": conversation}
+
+    def _build_context_block(self, team: str, year: int, players: list[str]) -> str:
         player_stats_text = self._format_player_stats(players, year)
         partner_history_text = self._format_partner_history(players)
 
-        return f"""You are helping a golf trip organizer decide fourball (better-ball) partnerships for {year}.
+        return f"""You are helping a golf trip organizer with fourball (better-ball) partnerships for {year}.
 
 Team: {team}
 Available players ({len(players)}): {', '.join(players)}
@@ -115,7 +143,11 @@ Individual Fourball performance to date:
 
 Historical partner synergy (Fourball matches only):
 {partner_history_text}
+"""
 
+    def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
+        context = self._build_context_block(team, year, players)
+        return f"""{context}
 Task: produce the best possible set of {len(players) // 2} pairings for {team} from these {len(players)} \
 players, using their individual records, historical synergy as partners, and handicaps to judge how well \
 each pair is likely to perform. Every player must appear in exactly one pair.
@@ -123,6 +155,33 @@ each pair is likely to perform. Every player must appear in exactly one pair.
 Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact shape:
 {{"pairings": [{{"players": ["PlayerA", "PlayerB"], "rationale": "one or two sentence justification"}}]}}
 """
+
+    def _send(self, client, conversation: list[dict]) -> str:
+        """Call the Anthropic API and return the reply text, wrapping any failure as PairingSuggestionError."""
+        try:
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=1500,
+                messages=conversation,
+            )
+        except anthropic.AuthenticationError as e:
+            raise PairingSuggestionError(
+                "Claude API rejected the configured API key. Check ANTHROPIC_API_KEY."
+            ) from e
+        except anthropic.RateLimitError as e:
+            raise PairingSuggestionError(
+                "Claude API rate limit or usage quota reached. Try again later."
+            ) from e
+        except anthropic.APIConnectionError as e:
+            raise PairingSuggestionError(
+                "Could not reach the Claude API. Check your network connection and try again."
+            ) from e
+        except anthropic.APIError as e:
+            raise PairingSuggestionError(f"Claude API returned an error: {e}") from e
+
+        return "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        )
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
