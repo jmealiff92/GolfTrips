@@ -35,6 +35,7 @@ from src.db_service import get_database_service
 from src.data_service import DataService
 from src.handicap_calculator import HandicapCalculator
 from src.auth import init_oauth, is_authenticated, get_current_user_email, is_admin
+from src.llm_pairing_service import PairingSuggester, PairingSuggestionError
 
 # Initialize services with correct database path
 # get_database_service() will automatically choose SQLite or PostgreSQL based on .env configuration
@@ -44,6 +45,7 @@ db_service = get_database_service(db_path)
 logger.info(f"Database type: {type(db_service).__name__}")
 data_service = DataService(db_service)
 logger.info("Data service initialized successfully")
+pairing_suggester = PairingSuggester(data_service, db_service)
 
 # Initialize Dash app with improved theme
 app = dash.Dash(
@@ -456,6 +458,7 @@ app.layout = html.Div([
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
             dbc.NavLink('➕ Add Match', href='/add-match', active='exact', id='nav-add-match'),
             dbc.NavLink('✏️ Edit Matches', href='/edit-matches', active='exact', id='nav-edit-matches'),
+            dbc.NavLink('🤝 Suggest Pairings', href='/suggest-pairings', active='exact', id='nav-suggest-pairings'),
             dbc.NavLink('⚔️ Head-to-Head', href='/head-to-head', active='exact'),
             dbc.NavLink('📈 Course Stats', href='/course-stats', active='exact'),
         ], pills=True, style={'marginBottom': '30px', 'justifyContent': 'center', 'flexWrap': 'wrap'}),
@@ -1240,6 +1243,62 @@ def create_team_roster_card(team_name, players):
     className="match-card")
 
 
+# ============ Page: Suggest Pairings ============
+def create_suggest_pairings_page():
+    """Create a page where an admin picks a team's available players and gets Claude-suggested Fourball pairings"""
+    real_current_year = date.today().year
+    years = sorted(
+        set(db_service.get_years_list()) | set(db_service.get_team_years_list()) | {real_current_year},
+        reverse=True
+    )
+    current_year = real_current_year if real_current_year in years else years[0]
+
+    return html.Div([
+        html.H2("Suggest Fourball Pairings", style={'marginBottom': '10px', 'textAlign': 'center'}),
+        html.P(
+            "Pick a team's available players for the day and Claude will suggest fourball partnerships, "
+            "based on individual performance, historical partner synergy, and handicaps.",
+            className='text-muted', style={'textAlign': 'center', 'marginBottom': '30px'}
+        ),
+
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Year", style={'fontWeight': 'bold'}),
+                        dcc.Dropdown(
+                            id='pairing-year-filter',
+                            options=[{'label': str(year), 'value': year} for year in years],
+                            value=current_year,
+                            clearable=False,
+                        )
+                    ], width=6),
+                    dbc.Col([
+                        dbc.Label("Team", style={'fontWeight': 'bold'}),
+                        dcc.Dropdown(
+                            id='pairing-team-filter',
+                            options=[{'label': 'Blue', 'value': 'Blue'}, {'label': 'Red', 'value': 'Red'}],
+                            value='Blue',
+                            clearable=False,
+                        )
+                    ], width=6),
+                ], className='mb-3'),
+
+                dbc.Label("Available Players", style={'fontWeight': 'bold'}),
+                dbc.Checklist(id='pairing-available-players', options=[], value=[], inline=True, className='mb-2'),
+                html.Div(id='pairing-selection-warning'),
+
+                dbc.Button(
+                    "Suggest Pairings", id='btn-suggest-pairings', color='primary', size='lg',
+                    className='mt-3', disabled=True
+                ),
+            ])
+        ], className='shadow mb-4'),
+
+        dcc.Loading(html.Div(id='pairing-suggestions-output'), type='default'),
+    ])
+
+
 # ============ Page 9: Edit Matches ============
 def create_edit_matches_page():
     return html.Div([
@@ -1391,6 +1450,8 @@ def display_page(pathname):
         return create_add_match_page()
     elif pathname == '/edit-matches':
         return create_edit_matches_page()
+    elif pathname == '/suggest-pairings':
+        return create_suggest_pairings_page()
     elif pathname == '/head-to-head':
         return create_head_to_head_page()
     elif pathname == '/course-stats':
@@ -2304,6 +2365,86 @@ def update_teams_display(year):
     ])
 
 
+# ============ Suggest Pairings Callbacks ============
+
+# Populate the available-players checklist for the selected year/team
+@app.callback(
+    [Output('pairing-available-players', 'options'),
+     Output('pairing-available-players', 'value')],
+    [Input('pairing-year-filter', 'value'),
+     Input('pairing-team-filter', 'value')]
+)
+def update_pairing_roster(year, team):
+    """Restrict the available-players checklist to the selected team's roster for the year"""
+    if not year or not team:
+        return [], []
+
+    assignments = db_service.get_team_assignments_by_year(year)
+    roster = sorted(a['name'] for a in assignments if a['team'] == team)
+    return [{'label': p, 'value': p} for p in roster], []
+
+
+# Enable/disable the Suggest Pairings button based on the selected player count
+@app.callback(
+    [Output('btn-suggest-pairings', 'disabled'),
+     Output('pairing-selection-warning', 'children')],
+    Input('pairing-available-players', 'value')
+)
+def validate_pairing_selection(selected):
+    """Fourball pairing requires an even number of selected players"""
+    selected = selected or []
+    if len(selected) < 2:
+        return True, None
+    if len(selected) % 2 != 0:
+        return True, dbc.Alert(
+            "Select an even number of players so everyone can be paired.",
+            color="warning", className='mt-2'
+        )
+    return False, None
+
+
+# Generate Claude-suggested pairings for the selected team
+@app.callback(
+    Output('pairing-suggestions-output', 'children'),
+    Input('btn-suggest-pairings', 'n_clicks'),
+    [State('pairing-year-filter', 'value'),
+     State('pairing-team-filter', 'value'),
+     State('pairing-available-players', 'value')],
+    prevent_initial_call=True
+)
+def generate_pairing_suggestions(n_clicks, year, team, available_players):
+    if not n_clicks:
+        return no_update
+
+    # Suggestions call a paid external API, so gate like other admin actions
+    has_access, error_alert = check_admin_access()
+    if not has_access:
+        return error_alert
+
+    try:
+        result = pairing_suggester.suggest_pairings(team, year, available_players or [])
+    except PairingSuggestionError as e:
+        return dbc.Alert(str(e), color="danger", dismissable=True)
+    except Exception as e:
+        logger.exception("Unexpected error generating pairing suggestions")
+        return dbc.Alert(f"Unexpected error generating suggestions: {e}", color="danger", dismissable=True)
+
+    cards = [
+        dbc.Card([
+            dbc.CardBody([
+                html.H5(f"Pair {i}: {pairing['players'][0]} & {pairing['players'][1]}", className='card-title'),
+                html.P(pairing['rationale'] or "No rationale provided.", className='card-text text-muted')
+            ])
+        ], className='mb-3 shadow-sm')
+        for i, pairing in enumerate(result['pairings'], start=1)
+    ]
+
+    return html.Div([
+        html.H4(f"Suggested Pairings for {team} Team ({year})", className='mb-3'),
+        html.Div(cards)
+    ])
+
+
 # ============ Edit Matches Callbacks ============
 
 # Display matches table with edit buttons
@@ -2682,23 +2823,26 @@ def update_auth_display(auth_data):
 
 
 @app.callback(
-    [Output('nav-manage-players', 'disabled'),
-     Output('nav-manage-courses', 'disabled'),
-     Output('nav-add-match', 'disabled'),
-     Output('nav-edit-matches', 'disabled')],
+    [Output('nav-manage-players', 'style'),
+     Output('nav-manage-courses', 'style'),
+     Output('nav-add-match', 'style'),
+     Output('nav-edit-matches', 'style'),
+     Output('nav-suggest-pairings', 'style')],
     Input('auth-store', 'data')
 )
 def update_nav_access(auth_data):
-    """Disable admin-only navigation links for non-admin users"""
+    """Hide admin-only navigation links entirely unless the user is logged in as an admin"""
+    hidden = {'display': 'none'}
+    visible = {}
+
     if not auth_data:
-        # Disable all write operations if not authenticated
-        return True, True, True, True
+        # Hide all admin-only links if not authenticated
+        return hidden, hidden, hidden, hidden, hidden
 
-    # Allow if user is admin
     is_admin_user = auth_data.get('is_admin', False)
-    disabled = not is_admin_user
+    style = visible if is_admin_user else hidden
 
-    return disabled, disabled, disabled, disabled
+    return style, style, style, style, style
 
 
 # Protect write operation callbacks

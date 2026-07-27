@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=0.40.0",
     "authlib>=1.2.0",
     "dash-bootstrap-components>=1.5.0",
     "dash[compress]>=2.14.0",
