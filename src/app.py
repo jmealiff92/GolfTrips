@@ -2823,24 +2823,26 @@ def update_auth_display(auth_data):
 
 
 @app.callback(
-    [Output('nav-manage-players', 'disabled'),
-     Output('nav-manage-courses', 'disabled'),
-     Output('nav-add-match', 'disabled'),
-     Output('nav-edit-matches', 'disabled'),
-     Output('nav-suggest-pairings', 'disabled')],
+    [Output('nav-manage-players', 'style'),
+     Output('nav-manage-courses', 'style'),
+     Output('nav-add-match', 'style'),
+     Output('nav-edit-matches', 'style'),
+     Output('nav-suggest-pairings', 'style')],
     Input('auth-store', 'data')
 )
 def update_nav_access(auth_data):
-    """Disable admin-only navigation links for non-admin users"""
+    """Hide admin-only navigation links entirely unless the user is logged in as an admin"""
+    hidden = {'display': 'none'}
+    visible = {}
+
     if not auth_data:
-        # Disable all write operations if not authenticated
-        return True, True, True, True, True
+        # Hide all admin-only links if not authenticated
+        return hidden, hidden, hidden, hidden, hidden
 
-    # Allow if user is admin
     is_admin_user = auth_data.get('is_admin', False)
-    disabled = not is_admin_user
+    style = visible if is_admin_user else hidden
 
-    return disabled, disabled, disabled, disabled, disabled
+    return style, style, style, style, style
 
 
 # Protect write operation callbacks
