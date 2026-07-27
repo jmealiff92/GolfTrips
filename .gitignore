@@ -14,6 +14,7 @@ wheels/
 
 # Database files
 data/
+/golf_trips.db
 
 # VSCode settings
 .vscode/
