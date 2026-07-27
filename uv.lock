@@ -300,6 +300,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dash-chat"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/41/37dee8f36679d660c74cf3226f8da6a1dee94faa0dbbd250f0e8b51e9c4d/dash_chat-0.3.0.tar.gz", hash = "sha256:5128c098e81fa09325bf4bb02f218c972af5dbd256fc0dc73e556ab704d52ce5", size = 5737084, upload-time = "2025-05-21T16:53:48.224Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/58/17e7db64bba03de19838a5d436ff764838d43b59312cb8446c4e6120925f/dash_chat-0.3.0-py3-none-any.whl", hash = "sha256:335c2acf21aa4c74fcc6a260c1c5510503040f001b86beae92592f8e7f1fa792", size = 5798055, upload-time = "2025-05-21T16:53:39.791Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -358,6 +367,7 @@ dependencies = [
     { name = "authlib" },
     { name = "dash", extra = ["compress"] },
     { name = "dash-bootstrap-components" },
+    { name = "dash-chat" },
     { name = "flask" },
     { name = "gunicorn" },
     { name = "pandas" },
@@ -374,6 +384,7 @@ requires-dist = [
     { name = "authlib", specifier = ">=1.2.0" },
     { name = "dash", extras = ["compress"], specifier = ">=2.14.0" },
     { name = "dash-bootstrap-components", specifier = ">=1.5.0" },
+    { name = "dash-chat", specifier = ">=0.3.0" },
     { name = "flask", specifier = ">=2.3.0" },
     { name = "gunicorn", specifier = ">=21.0.0" },
     { name = "pandas", specifier = ">=2.0.0" },
