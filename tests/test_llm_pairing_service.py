@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -59,6 +60,22 @@ class TestPairingSuggester(unittest.TestCase):
         with self.assertRaises(PairingSuggestionError) as ctx:
             suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
         self.assertIn('ANTHROPIC_API_KEY', str(ctx.exception))
+
+    def test_api_key_resolves_fresh_from_environment_without_restart(self):
+        """A key added to the environment after construction should take effect immediately,
+        so a Render env var change doesn't require restarting the process to work."""
+        suggester = PairingSuggester(self.data_service, self.db_service, api_key=None, model='claude-test')
+        with patch.dict('os.environ', {}, clear=False):
+            os.environ.pop('ANTHROPIC_API_KEY', None)
+            self.assertIsNone(suggester.api_key)
+            os.environ['ANTHROPIC_API_KEY'] = 'sk-late-arriving-key'
+            self.assertEqual(suggester.api_key, 'sk-late-arriving-key')
+            os.environ.pop('ANTHROPIC_API_KEY', None)
+
+    def test_explicit_api_key_override_ignores_environment(self):
+        suggester = self._suggester(api_key='explicit-key')
+        with patch.dict('os.environ', {'ANTHROPIC_API_KEY': 'env-key'}):
+            self.assertEqual(suggester.api_key, 'explicit-key')
 
     def test_odd_player_count_rejected_before_api_call(self):
         suggester = self._suggester()

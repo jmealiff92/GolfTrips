@@ -8,6 +8,7 @@ import dash_bootstrap_components as dbc
 from dash_chat import ChatComponent
 import os
 import sys
+import time
 from datetime import date
 from flask import session, redirect, url_for
 from dotenv import load_dotenv
@@ -2456,6 +2457,7 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
     try:
         result = pairing_suggester.suggest_pairings(team, year, available_players or [])
     except PairingSuggestionError as e:
+        logger.warning("Pairing suggestion failed (team=%s, year=%s): %s", team, year, e)
         return dbc.Alert(str(e), color="danger", dismissable=True), no_update, no_update
     except Exception as e:
         logger.exception("Unexpected error generating pairing suggestions")
@@ -2475,6 +2477,7 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
     ]
 
     opening_message = [{
+        'id': int(time.time() * 1000),
         'role': 'assistant',
         'content': (
             f"I've suggested {len(result['pairings'])} pairing(s) for {team} ({year}) above. "
@@ -2506,41 +2509,63 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
     prevent_initial_call=True
 )
 def send_pairing_chat_message(new_message, messages, year, team, available_players, conversation):
-    if not new_message or not new_message.get('content', '').strip():
+    if not new_message:
         return no_update, no_update
 
-    user_message = new_message['content'].strip()
+    content = new_message.get('content')
+    if not isinstance(content, str):
+        # e.g. a file-attachment payload (a list), which this feature doesn't support
+        messages = list(messages or []) + [new_message, {
+            'id': int(time.time() * 1000),
+            'role': 'assistant',
+            'content': '⚠️ Only text messages are supported right now.',
+        }]
+        return no_update, messages
+
+    user_message = content.strip()
+    if not user_message:
+        return no_update, no_update
+
     messages = list(messages or []) + [new_message]
-
-    if not available_players:
-        messages.append({
-            'role': 'assistant',
-            'content': '⚠️ Select at least one available player above before chatting.',
-        })
-        return no_update, messages
-
-    has_access, _ = check_admin_access()
-    if not has_access:
-        messages.append({
-            'role': 'assistant',
-            'content': '⚠️ You do not have permission to perform this action. Admin access required.',
-        })
-        return no_update, messages
+    logger.info(
+        "Pairing chat message received (team=%s, year=%s, players=%d, chars=%d)",
+        team, year, len(available_players or []), len(user_message)
+    )
 
     try:
+        if not available_players:
+            messages.append({
+                'id': int(time.time() * 1000),
+                'role': 'assistant',
+                'content': '⚠️ Select at least one available player above before chatting.',
+            })
+            return no_update, messages
+
+        has_access, _ = check_admin_access()
+        if not has_access:
+            messages.append({
+                'id': int(time.time() * 1000),
+                'role': 'assistant',
+                'content': '⚠️ You do not have permission to perform this action. Admin access required.',
+            })
+            return no_update, messages
+
         result = pairing_suggester.continue_conversation(
             team, year, available_players, conversation, user_message
         )
+        logger.info("Pairing chat reply sent (%d chars)", len(result['reply']))
+        messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': result['reply']})
+        return result['conversation'], messages
     except PairingSuggestionError as e:
-        messages.append({'role': 'assistant', 'content': f"⚠️ {e}"})
+        logger.warning("Pairing chat failed (team=%s, year=%s): %s", team, year, e)
+        messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ {e}"})
         return no_update, messages
     except Exception as e:
         logger.exception("Unexpected error in pairing chat")
-        messages.append({'role': 'assistant', 'content': f"⚠️ Unexpected error: {e}"})
+        messages.append({
+            'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ Unexpected error: {e}",
+        })
         return no_update, messages
-
-    messages.append({'role': 'assistant', 'content': result['reply']})
-    return result['conversation'], messages
 
 
 # ============ Edit Matches Callbacks ============
