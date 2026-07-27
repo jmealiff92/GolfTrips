@@ -7,11 +7,14 @@ synergy, and handicaps. Advisory only - callers still create matches
 manually via the existing Add Match flow.
 """
 import json
+import logging
 import os
 import re
 from typing import Optional
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 MAX_ATTEMPTS = 2
@@ -27,8 +30,14 @@ class PairingSuggester:
     def __init__(self, data_service, db_service, api_key: Optional[str] = None, model: Optional[str] = None):
         self.data_service = data_service
         self.db_service = db_service
-        self.api_key = api_key if api_key is not None else os.getenv('ANTHROPIC_API_KEY')
+        self._api_key_override = api_key
         self.model = model or os.getenv('ANTHROPIC_MODEL', DEFAULT_MODEL)
+
+    @property
+    def api_key(self) -> Optional[str]:
+        """Resolved fresh on every access (unless explicitly overridden) so a key added to the
+        environment after process startup takes effect without requiring a restart."""
+        return self._api_key_override if self._api_key_override is not None else os.getenv('ANTHROPIC_API_KEY')
 
     def suggest_pairings(self, team: str, year: int, available_players: list[str]) -> dict:
         """Return {'team', 'year', 'pairings': [...], 'conversation': [...]}.
@@ -42,6 +51,7 @@ class PairingSuggester:
         if len(players) % 2 != 0:
             raise PairingSuggestionError("Select an even number of players so everyone can be paired.")
         if not self.api_key:
+            logger.warning("suggest_pairings called with no ANTHROPIC_API_KEY configured")
             raise PairingSuggestionError(
                 "Claude pairing suggestions aren't configured. Add ANTHROPIC_API_KEY to your .env file."
             )
@@ -87,6 +97,7 @@ class PairingSuggester:
         user's message, rather than spent on a separate priming call.
         """
         if not self.api_key:
+            logger.warning("continue_conversation called with no ANTHROPIC_API_KEY configured")
             raise PairingSuggestionError(
                 "Claude pairing suggestions aren't configured. Add ANTHROPIC_API_KEY to your .env file."
             )
@@ -158,6 +169,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _send(self, client, conversation: list[dict]) -> str:
         """Call the Anthropic API and return the reply text, wrapping any failure as PairingSuggestionError."""
+        logger.info("Calling Claude API (model=%s, turns=%d)", self.model, len(conversation))
         try:
             response = client.messages.create(
                 model=self.model,
@@ -165,23 +177,29 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 messages=conversation,
             )
         except anthropic.AuthenticationError as e:
+            logger.warning("Claude API authentication error: %s", e)
             raise PairingSuggestionError(
                 "Claude API rejected the configured API key. Check ANTHROPIC_API_KEY."
             ) from e
         except anthropic.RateLimitError as e:
+            logger.warning("Claude API rate limit/quota error: %s", e)
             raise PairingSuggestionError(
                 "Claude API rate limit or usage quota reached. Try again later."
             ) from e
         except anthropic.APIConnectionError as e:
+            logger.warning("Claude API connection error: %s", e)
             raise PairingSuggestionError(
                 "Could not reach the Claude API. Check your network connection and try again."
             ) from e
         except anthropic.APIError as e:
+            logger.warning("Claude API error: %s", e)
             raise PairingSuggestionError(f"Claude API returned an error: {e}") from e
 
-        return "".join(
+        text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         )
+        logger.info("Claude API reply received (%d chars)", len(text))
+        return text
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
