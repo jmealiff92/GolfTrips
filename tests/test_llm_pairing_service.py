@@ -16,9 +16,16 @@ class FakeTextBlock:
         self.text = text
 
 
+class FakeNonTextBlock:
+    def __init__(self, block_type='thinking'):
+        self.type = block_type
+
+
 class FakeMessage:
-    def __init__(self, text):
-        self.content = [FakeTextBlock(text)]
+    def __init__(self, text=None, stop_reason='end_turn', stop_details=None, content=None):
+        self.content = content if content is not None else ([FakeTextBlock(text)] if text is not None else [])
+        self.stop_reason = stop_reason
+        self.stop_details = stop_details
 
 
 class TestPairingSuggester(unittest.TestCase):
@@ -207,6 +214,27 @@ class TestPairingSuggester(unittest.TestCase):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
 
+    def test_timeout_error_is_wrapped_gracefully_and_distinctly(self):
+        suggester = self._suggester()
+        request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        fake_client = MagicMock()
+        fake_client.messages.create.side_effect = anthropic.APITimeoutError(request=request)
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertRaises(PairingSuggestionError) as ctx:
+                suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('timed out', str(ctx.exception).lower())
+
+    def test_empty_reply_with_refusal_stop_reason_raises_visible_error(self):
+        suggester = self._suggester()
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = FakeMessage(
+            content=[FakeNonTextBlock('refusal')], stop_reason='refusal'
+        )
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertRaises(PairingSuggestionError) as ctx:
+                suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('refusal', str(ctx.exception).lower())
+
     # ---- continue_conversation: chat without a prior suggestion (lazy, token-free seed) ----
 
     def test_chat_without_prior_conversation_seeds_context_in_a_single_call(self):
@@ -269,6 +297,25 @@ class TestPairingSuggester(unittest.TestCase):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
         self.assertIn('rate limit', str(ctx.exception).lower())
+
+    def test_chat_timeout_error_is_wrapped_gracefully(self):
+        suggester = self._suggester()
+        request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        fake_client = MagicMock()
+        fake_client.messages.create.side_effect = anthropic.APITimeoutError(request=request)
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertRaises(PairingSuggestionError) as ctx:
+                suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
+        self.assertIn('timed out', str(ctx.exception).lower())
+
+    def test_chat_empty_reply_raises_visible_error(self):
+        suggester = self._suggester()
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = FakeMessage(content=[], stop_reason='max_tokens')
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertRaises(PairingSuggestionError) as ctx:
+                suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
+        self.assertIn('empty response', str(ctx.exception).lower())
 
 
 if __name__ == '__main__':

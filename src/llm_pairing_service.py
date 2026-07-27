@@ -59,7 +59,7 @@ class PairingSuggester:
         prompt = self._build_suggestion_prompt(team, year, players)
 
         try:
-            client = anthropic.Anthropic(api_key=self.api_key)
+            client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0)
         except Exception as e:
             raise PairingSuggestionError(f"Could not initialize the Claude client: {e}") from e
 
@@ -127,7 +127,7 @@ Admin: {user_message}"""
             conversation = [{"role": "user", "content": seed}]
 
         try:
-            client = anthropic.Anthropic(api_key=self.api_key)
+            client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0)
         except Exception as e:
             raise PairingSuggestionError(f"Could not initialize the Claude client: {e}") from e
 
@@ -176,6 +176,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 max_tokens=1500,
                 messages=conversation,
             )
+        except anthropic.APITimeoutError as e:
+            logger.warning("Claude API request timed out: %s", e)
+            raise PairingSuggestionError("Claude API request timed out. Try again.") from e
         except anthropic.AuthenticationError as e:
             logger.warning("Claude API authentication error: %s", e)
             raise PairingSuggestionError(
@@ -195,9 +198,21 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             logger.warning("Claude API error: %s", e)
             raise PairingSuggestionError(f"Claude API returned an error: {e}") from e
 
+        block_types = [getattr(block, "type", None) for block in response.content]
+        logger.info(
+            "Claude API response: stop_reason=%s, stop_details=%s, block_types=%s",
+            response.stop_reason, getattr(response, "stop_details", None), block_types
+        )
+
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         )
+        if not text:
+            raise PairingSuggestionError(
+                f"Claude returned an empty response (stop_reason: {response.stop_reason}). "
+                "Try rephrasing your message."
+            )
+
         logger.info("Claude API reply received (%d chars)", len(text))
         return text
 
