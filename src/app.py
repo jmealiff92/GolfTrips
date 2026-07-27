@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
+from dash_chat import ChatComponent
 import os
 import sys
 from datetime import date
@@ -466,11 +467,13 @@ app.layout = html.Div([
         # Alert for feedback messages
         html.Div(id='alert-container', style={'marginBottom': '20px'}),
 
-        # Page content with loading spinner
+        # Page content with loading spinner (scoped to page navigation only, so nested
+        # callbacks elsewhere on the page - e.g. chat - don't trigger a full-page spinner)
         dcc.Loading(
             id='page-loading',
             type='default',
             color='#4caf50',
+            target_components={'page-content': 'children'},
             children=html.Div(id='page-content')
         )
     ], className='main-container')
@@ -1298,7 +1301,6 @@ def create_suggest_pairings_page():
         dcc.Loading(html.Div(id='pairing-suggestions-output'), type='default'),
 
         dcc.Store(id='pairing-conversation-store', data=None),
-        dcc.Store(id='pairing-chat-messages-store', data=[]),
 
         dbc.Card([
             dbc.CardBody([
@@ -1308,18 +1310,13 @@ def create_suggest_pairings_page():
                     "just start chatting — no need to generate suggestions first.",
                     className='text-muted', style={'marginBottom': '15px'}
                 ),
-                dcc.Loading(
-                    html.Div(id='pairing-chat-log', style={'marginBottom': '15px'}),
-                    type='default'
+                ChatComponent(
+                    id='pairing-chat-component',
+                    messages=[],
+                    theme='light',
+                    fill_width=True,
+                    input_placeholder='Ask about pairings, or propose your own...',
                 ),
-                dbc.InputGroup([
-                    dbc.Input(
-                        id='pairing-chat-input',
-                        placeholder='Ask about pairings, or propose your own...',
-                        disabled=True,
-                    ),
-                    dbc.Button("Send", id='btn-pairing-chat-send', color='primary', disabled=True),
-                ]),
             ])
         ], className='shadow mt-4'),
     ])
@@ -2398,7 +2395,7 @@ def update_teams_display(year):
     [Output('pairing-available-players', 'options'),
      Output('pairing-available-players', 'value'),
      Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-messages-store', 'data', allow_duplicate=True)],
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
     [Input('pairing-year-filter', 'value'),
      Input('pairing-team-filter', 'value')],
     prevent_initial_call='initial_duplicate'
@@ -2436,23 +2433,11 @@ def validate_pairing_selection(selected):
     return False, None
 
 
-# Enable/disable the chat box based on whether any players are selected.
-# Unlike Suggest Pairings, chat doesn't need a full/even set of pairs.
-@app.callback(
-    [Output('pairing-chat-input', 'disabled'),
-     Output('btn-pairing-chat-send', 'disabled')],
-    Input('pairing-available-players', 'value')
-)
-def toggle_pairing_chat_enabled(selected):
-    disabled = not selected
-    return disabled, disabled
-
-
 # Generate Claude-suggested pairings for the selected team
 @app.callback(
     [Output('pairing-suggestions-output', 'children'),
      Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-messages-store', 'data', allow_duplicate=True)],
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
     Input('btn-suggest-pairings', 'n_clicks'),
     [State('pairing-year-filter', 'value'),
      State('pairing-team-filter', 'value'),
@@ -2491,7 +2476,7 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
 
     opening_message = [{
         'role': 'assistant',
-        'text': (
+        'content': (
             f"I've suggested {len(result['pairings'])} pairing(s) for {team} ({year}) above. "
             "Ask me about them, or propose a different pairing and I'll give feedback."
         ),
@@ -2507,83 +2492,55 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
     )
 
 
-# Render the chat log from the display-only messages store
-@app.callback(
-    Output('pairing-chat-log', 'children'),
-    Input('pairing-chat-messages-store', 'data')
-)
-def render_pairing_chat_log(messages):
-    if not messages:
-        return html.P("No messages yet. Ask a question below to get started.", className='text-muted mb-0')
-
-    bubbles = []
-    for msg in messages:
-        role = msg.get('role')
-        text = msg.get('text', '')
-        if role == 'user':
-            bubbles.append(html.Div(
-                text, className='mb-2 p-2',
-                style={'backgroundColor': '#e3f2fd', 'borderRadius': '8px', 'textAlign': 'right'}
-            ))
-        elif role == 'error':
-            bubbles.append(dbc.Alert(text, color='danger', className='mb-2 py-2'))
-        else:
-            bubbles.append(html.Div(
-                dcc.Markdown(text, className='mb-0'), className='mb-2 p-2',
-                style={'backgroundColor': '#f1f1f1', 'borderRadius': '8px'}
-            ))
-    return bubbles
-
-
 # Send a chat message: continues the pairing conversation, seeding it locally (no API call)
 # if this is the first message and no suggestion has been generated yet
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-messages-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-input', 'value')],
-    [Input('btn-pairing-chat-send', 'n_clicks'),
-     Input('pairing-chat-input', 'n_submit')],
-    [State('pairing-chat-input', 'value'),
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    Input('pairing-chat-component', 'new_message'),
+    [State('pairing-chat-component', 'messages'),
      State('pairing-year-filter', 'value'),
      State('pairing-team-filter', 'value'),
      State('pairing-available-players', 'value'),
-     State('pairing-conversation-store', 'data'),
-     State('pairing-chat-messages-store', 'data')],
+     State('pairing-conversation-store', 'data')],
     prevent_initial_call=True
 )
-def send_pairing_chat_message(n_clicks, n_submit, user_message, year, team, available_players,
-                               conversation, messages):
-    user_message = (user_message or '').strip()
-    if not user_message:
-        return no_update, no_update, no_update
+def send_pairing_chat_message(new_message, messages, year, team, available_players, conversation):
+    if not new_message or not new_message.get('content', '').strip():
+        return no_update, no_update
 
-    messages = list(messages or [])
+    user_message = new_message['content'].strip()
+    messages = list(messages or []) + [new_message]
+
+    if not available_players:
+        messages.append({
+            'role': 'assistant',
+            'content': '⚠️ Select at least one available player above before chatting.',
+        })
+        return no_update, messages
 
     has_access, _ = check_admin_access()
     if not has_access:
-        messages.append({'role': 'user', 'text': user_message})
         messages.append({
-            'role': 'error',
-            'text': 'You do not have permission to perform this action. Admin access required.',
+            'role': 'assistant',
+            'content': '⚠️ You do not have permission to perform this action. Admin access required.',
         })
-        return no_update, messages, ''
-
-    messages.append({'role': 'user', 'text': user_message})
+        return no_update, messages
 
     try:
         result = pairing_suggester.continue_conversation(
-            team, year, available_players or [], conversation, user_message
+            team, year, available_players, conversation, user_message
         )
     except PairingSuggestionError as e:
-        messages.append({'role': 'error', 'text': str(e)})
-        return no_update, messages, ''
+        messages.append({'role': 'assistant', 'content': f"⚠️ {e}"})
+        return no_update, messages
     except Exception as e:
         logger.exception("Unexpected error in pairing chat")
-        messages.append({'role': 'error', 'text': f"Unexpected error: {e}"})
-        return no_update, messages, ''
+        messages.append({'role': 'assistant', 'content': f"⚠️ Unexpected error: {e}"})
+        return no_update, messages
 
-    messages.append({'role': 'assistant', 'text': result['reply']})
-    return result['conversation'], messages, ''
+    messages.append({'role': 'assistant', 'content': result['reply']})
+    return result['conversation'], messages
 
 
 # ============ Edit Matches Callbacks ============
