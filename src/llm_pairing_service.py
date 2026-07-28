@@ -74,7 +74,10 @@ class PairingSuggester:
                 "type": "object",
                 "properties": {
                     "year": {"type": "integer", "description": "Trip year, e.g. 2026"},
-                    "match_type": {"type": "string", "enum": ["Singles", "Fourball"]},
+                    "match_type": {
+                        "type": "string", "enum": ["Singles", "Fourball"],
+                        "description": "Omit to include both Singles and Fourball matches.",
+                    },
                     "player": {"type": "string", "description": "Only matches this player appeared in"},
                 },
             },
@@ -83,13 +86,20 @@ class PairingSuggester:
             "name": "get_player_stats",
             "description": (
                 "Overall win/loss/half record, win percentage, and points-per-game for one player, "
-                "optionally filtered to Singles or Fourball, plus their handicap index for a given year."
+                "plus their handicap index for a given year. Omit match_type to get their combined "
+                "record across all match types (Singles + Fourball) - this is the right default for "
+                "general questions about a player. Only pass match_type when the question is "
+                "specifically about their Fourball or Singles record (e.g. pairing decisions, which "
+                "are always Fourball-only)."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "player": {"type": "string"},
-                    "match_type": {"type": "string", "enum": ["Singles", "Fourball"]},
+                    "match_type": {
+                        "type": "string", "enum": ["Singles", "Fourball"],
+                        "description": "Omit for the player's combined record across all match types.",
+                    },
                     "year": {"type": "integer", "description": "Year to look up the handicap index for"},
                 },
                 "required": ["player"],
@@ -262,6 +272,8 @@ handicaps use an 85% allowance, with the lowest course handicap in the group pla
 everyone else receiving 85% of the difference - so pairing two very low-handicap players together does \
 not by itself create an unfair advantage within their own pair.
 
+The sections below are scoped to Fourball only, since that's the match type these pairings are for:
+
 Individual Fourball performance to date:
 {player_stats_text}
 
@@ -276,13 +288,20 @@ IMPORTANT - weigh the margins above, not just the raw win/loss tally: a player w
 loss was 1 down or 2&1 has been performing much better than the record suggests and shouldn't be \
 treated as weak; a player who is 3-1 but every win was narrow and the loss was a 6&5 blowout isn't \
 automatically the stronger pick either. Use the closeness of results, not just win/loss counts, when \
-judging how well a player is likely to perform and who they're best paired with.
+judging how well a player is likely to perform and who they're best paired with. This only applies \
+to pairing decisions, which are always Fourball-only.
 
 You also have tools to look up match-by-match results (including each match's score/margin, to judge \
 how tight or lopsided it was), a player's full stats or handicap for a given year, head-to-head records \
 between two players, partner history, and course-by-course performance. Use them whenever a question \
-needs more detail than the summary above - e.g. to check how close a player's wins/losses actually were, \
-or how strong the opposition they faced has been.
+needs more detail than the summary above.
+
+SCOPE - the Fourball-only data above is for judging pairings. It is NOT the player's overall record. \
+If the admin asks a general question about a player (their record, how good they are, how they've been \
+playing, etc.) without specifying a match type, treat that as spanning ALL match types: call \
+get_player_stats or get_matches with no match_type argument to get their combined Singles + Fourball \
+picture, don't just reuse the Fourball-only summary above. Only scope an answer to one match type when \
+the admin's question is specifically about pairings, Fourball, or Singles.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:

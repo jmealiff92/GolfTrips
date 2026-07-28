@@ -124,6 +124,17 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertIn('Match-by-match Fourball results', prompt)
         self.assertIn('not just the raw win/loss tally', prompt)
 
+    def test_prompt_scopes_fourball_context_to_pairings_and_tells_claude_to_widen_for_general_questions(self):
+        suggester = self._suggester()
+        prompt = suggester._build_suggestion_prompt('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('NOT the player\'s overall record', prompt)
+        self.assertIn('no match_type argument', prompt)
+
+    def test_get_player_stats_tool_schema_documents_all_match_types_default(self):
+        suggester = self._suggester()
+        tool = next(t for t in suggester.TOOLS if t['name'] == 'get_player_stats')
+        self.assertIn('all match types', tool['description'])
+
     # ---- response parsing/validation ----
 
     def test_successful_response_parsed_into_pairings(self):
@@ -455,6 +466,16 @@ class TestPairingSuggesterTools(unittest.TestCase):
         payload = json.loads(suggester._execute_tool('get_player_stats', {'player': 'Alice', 'year': 2026}))
         self.assertEqual(payload['stats']['Wins'], 3)
         self.assertEqual(payload['handicap_index'], 5.0)
+
+    def test_get_player_stats_defaults_to_all_match_types(self):
+        suggester = self._suggester()
+        suggester._execute_tool('get_player_stats', {'player': 'Alice'})
+        self.data_service.get_player_performance_all_players.assert_called_once_with(None)
+
+    def test_get_player_stats_respects_explicit_match_type(self):
+        suggester = self._suggester()
+        suggester._execute_tool('get_player_stats', {'player': 'Alice', 'match_type': 'Singles'})
+        self.data_service.get_player_performance_all_players.assert_called_once_with('Singles')
 
     def test_get_player_stats_unknown_player_returns_no_stats(self):
         suggester = self._suggester()
