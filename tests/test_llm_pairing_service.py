@@ -135,6 +135,17 @@ class TestPairingSuggester(unittest.TestCase):
         tool = next(t for t in suggester.TOOLS if t['name'] == 'get_player_stats')
         self.assertIn('all match types', tool['description'])
 
+    def test_get_player_course_performance_tool_schema_documents_pending_field(self):
+        suggester = self._suggester()
+        tool = next(t for t in suggester.TOOLS if t['name'] == 'get_player_course_performance')
+        self.assertIn('Pending', tool['description'])
+
+    def test_prompt_instructs_flagging_pending_matches(self):
+        suggester = self._suggester()
+        prompt = suggester._build_suggestion_prompt('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('PENDING MATCHES', prompt)
+        self.assertIn('Pending', prompt)
+
     # ---- response parsing/validation ----
 
     def test_successful_response_parsed_into_pairings(self):
@@ -502,6 +513,16 @@ class TestPairingSuggesterTools(unittest.TestCase):
         suggester = self._suggester()
         payload = json.loads(suggester._execute_tool('get_player_course_performance', {'player': 'Alice'}))
         self.assertEqual(payload['courses'][0]['Wins'], 1)
+        self.assertEqual(payload['courses'][0]['Pending'], 0)
+
+    def test_get_player_course_performance_flags_pending_matches(self):
+        suggester = self._suggester()
+        self.data_service.get_player_course_performance.return_value = pd.DataFrame({
+            'Course': ['Druids Heath'], 'Matches': [3], 'Wins': [2], 'Halves': [0], 'Losses': [0],
+            'Points': [2.0], 'PPG': [0.67],
+        })
+        payload = json.loads(suggester._execute_tool('get_player_course_performance', {'player': 'Jeff'}))
+        self.assertEqual(payload['courses'][0]['Pending'], 1)
 
     def test_unknown_tool_name_returns_json_error(self):
         suggester = self._suggester()
