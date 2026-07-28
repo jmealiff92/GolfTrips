@@ -98,7 +98,9 @@ class DataService:
 
     def get_match_result_for_player(self, result: str, player_team: str) -> str:
         """Convert match result to player perspective"""
-        if result == 'Half':
+        if not result:
+            return 'Pending'
+        elif result == 'Half':
             return 'Half'
         elif player_team == 'Blue' and result == 'Blue':
             return 'Win'
@@ -118,6 +120,11 @@ class DataService:
         # Filter by match type if specified
         if match_type:
             df = df[df['MatchType'] == match_type]
+
+        # Exclude matches with no result logged yet - they aren't wins or losses
+        df = df[df['Result'] != 'Pending']
+        if df.empty:
+            return pd.DataFrame(columns=cols)
 
         # Group by player and calculate performance metrics
         player_stats = df.groupby('Player').agg(
@@ -221,6 +228,8 @@ class DataService:
     
     def get_partner_performace(self, player="All", min_matches=0):
         df = self.build_player_matches()
+        # Exclude matches with no result logged yet - they aren't wins or losses
+        df = df[df['result'] != 'Pending'].copy()
         df['partnership'] = (
             df[['player_name','partner_name']]
             .apply(lambda s: ' & '.join(sorted((str(s.iloc[0] or ''), str(s.iloc[1] or '')))), axis=1)
@@ -255,7 +264,9 @@ def check_value_exists(value):
         return True
 
 def get_match_result_for_player(result: str, player_team: str) -> str:
-    if result == 'Half':
+    if not result:
+        return 'Pending'
+    elif result == 'Half':
         return 'Half'
     elif player_team == 'Blue' and result == 'Blue':
         return 'Win'
