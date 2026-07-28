@@ -1,10 +1,16 @@
 """
-LLM-based fourball partner suggestions.
+LLM-based fourball partner suggestions and open-ended trip stats chat ("Captain Claude").
 
 Given a team's available players for a day, asks Claude to split them into
 pairs using each player's individual Fourball record, historical partner
 synergy, and handicaps. Advisory only - callers still create matches
 manually via the existing Add Match flow.
+
+Beyond pairing suggestions, the chat also gives Claude tool access to query
+match-by-match results (including score margins, to judge how tight a match
+was), head-to-head records, partner history, and course performance, so it
+can answer open-ended stats questions rather than only what's pre-baked into
+the prompt context.
 """
 import json
 import logging
@@ -19,6 +25,34 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 MAX_ATTEMPTS = 2
 MAX_TOKENS = 4096
+MAX_TOOL_ITERATIONS = 6
+
+
+def _json_default(value):
+    """json.dumps default= hook: unwrap numpy/pandas scalars, stringify anything else."""
+    if hasattr(value, "item"):
+        return value.item()
+    return str(value)
+
+
+def _df_records(df) -> list:
+    """DataFrame -> JSON-safe list of dicts (NaN -> None), or [] for None/empty input."""
+    if df is None or getattr(df, "empty", True):
+        return []
+    return df.where(df.notnull(), None).to_dict('records')
+
+
+def _serialize_content_blocks(blocks) -> list[dict]:
+    """Anthropic SDK response content blocks -> plain JSON-safe dicts, for storing in dcc.Store
+    and replaying back to the API on the next turn."""
+    serialized = []
+    for block in blocks:
+        block_type = getattr(block, "type", None)
+        if block_type == "text":
+            serialized.append({"type": "text", "text": block.text})
+        elif block_type == "tool_use":
+            serialized.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+    return serialized
 
 
 class PairingSuggestionError(Exception):
@@ -26,7 +60,81 @@ class PairingSuggestionError(Exception):
 
 
 class PairingSuggester:
-    """Uses the Claude API to suggest fourball partnerships for one team."""
+    """Uses the Claude API to suggest fourball partnerships and answer stats questions for one team."""
+
+    TOOLS = [
+        {
+            "name": "get_matches",
+            "description": (
+                "Look up individual match results, including each match's score/margin "
+                "(e.g. '3&2', '1 up', 'AS') so you can judge how tight or lopsided it was, and "
+                "exactly who played whom. Filter by any combination of year, match type, or player."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "year": {"type": "integer", "description": "Trip year, e.g. 2026"},
+                    "match_type": {"type": "string", "enum": ["Singles", "Fourball"]},
+                    "player": {"type": "string", "description": "Only matches this player appeared in"},
+                },
+            },
+        },
+        {
+            "name": "get_player_stats",
+            "description": (
+                "Overall win/loss/half record, win percentage, and points-per-game for one player, "
+                "optionally filtered to Singles or Fourball, plus their handicap index for a given year."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "player": {"type": "string"},
+                    "match_type": {"type": "string", "enum": ["Singles", "Fourball"]},
+                    "year": {"type": "integer", "description": "Year to look up the handicap index for"},
+                },
+                "required": ["player"],
+            },
+        },
+        {
+            "name": "get_head_to_head",
+            "description": "Head-to-head record between two specific players across every match they've played against each other.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "player1": {"type": "string"},
+                    "player2": {"type": "string"},
+                },
+                "required": ["player1", "player2"],
+            },
+        },
+        {
+            "name": "get_partner_history",
+            "description": (
+                "Fourball partnership records - how pairs of players have performed together as "
+                "partners. Optionally scoped to one player's partnerships."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "player": {"type": "string", "description": "Only partnerships involving this player"},
+                },
+            },
+        },
+        {
+            "name": "get_course_stats",
+            "description": "Aggregate Blue/Red record at each golf course played on the trip.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_player_course_performance",
+            "description": "One player's win/loss/half record broken down by course.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"player": {"type": "string"}},
+                "required": ["player"],
+            },
+        },
+    ]
 
     def __init__(self, data_service, db_service, api_key: Optional[str] = None, model: Optional[str] = None):
         self.data_service = data_service
@@ -91,7 +199,7 @@ class PairingSuggester:
 
     def continue_conversation(self, team: str, year: int, available_players: list[str],
                                conversation: Optional[list[dict]], user_message: str) -> dict:
-        """Continue a chat about pairings; return {'reply': str, 'conversation': [...]}.
+        """Continue an open-ended chat with Captain Claude; return {'reply': str, 'conversation': [...]}.
 
         If `conversation` is empty (no suggestion has been generated yet), the stats/handicap
         context is built locally at no API cost and bundled into this same request alongside the
@@ -120,9 +228,10 @@ class PairingSuggester:
             players = list(dict.fromkeys(available_players or []))
             context = self._build_context_block(team, year, players)
             seed = f"""{context}
-The admin has not generated a formatted pairing list yet. Answer their question or discuss pairing \
-ideas conversationally in plain text, using the data above. They can click "Suggest Pairings" \
-separately if they want a full formatted list.
+The admin has not generated a formatted pairing list yet. Answer their question - about pairings, \
+individual/head-to-head/course stats, or anything else about the trip - conversationally in plain \
+text, using the data above and your tools. They can click "Suggest Pairings" separately if they \
+want a full formatted list.
 
 Admin: {user_message}"""
             conversation = [{"role": "user", "content": seed}]
@@ -140,7 +249,9 @@ Admin: {user_message}"""
         player_stats_text = self._format_player_stats(players, year)
         partner_history_text = self._format_partner_history(players)
 
-        return f"""You are helping a golf trip organizer with fourball (better-ball) partnerships for {year}.
+        return f"""You are Captain Claude, helping a golf trip organizer with fourball (better-ball) \
+partnerships for {year} and with any other questions they have about the trip's matches, players, and \
+courses.
 
 Team: {team}
 Available players ({len(players)}): {', '.join(players)}
@@ -155,6 +266,12 @@ Individual Fourball performance to date:
 
 Historical partner synergy (Fourball matches only):
 {partner_history_text}
+
+You also have tools to look up match-by-match results (including each match's score/margin, to judge \
+how tight or lopsided it was), a player's full stats or handicap for a given year, head-to-head records \
+between two players, partner history, and course-by-course performance. Use them whenever a question \
+needs more detail than the summary above - e.g. to check how close a player's wins/losses actually were, \
+or how strong the opposition they faced has been.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -169,12 +286,48 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 """
 
     def _send(self, client, conversation: list[dict]) -> str:
-        """Call the Anthropic API and return the reply text, wrapping any failure as PairingSuggestionError."""
+        """Call the Anthropic API and return the final reply text, wrapping any failure as
+        PairingSuggestionError. Transparently runs Claude's tool calls (see TOOLS) against the
+        data/db services, feeding results back until Claude produces a text reply or the
+        iteration cap is hit, appending each turn to `conversation` in place as it goes."""
+        for _ in range(MAX_TOOL_ITERATIONS):
+            response = self._call_api(client, conversation)
+
+            if response.stop_reason == "tool_use":
+                conversation.append({
+                    "role": "assistant", "content": _serialize_content_blocks(response.content),
+                })
+                tool_results = []
+                for block in response.content:
+                    if getattr(block, "type", None) == "tool_use":
+                        result_text = self._execute_tool(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result", "tool_use_id": block.id, "content": result_text,
+                        })
+                conversation.append({"role": "user", "content": tool_results})
+                continue
+
+            text = "".join(
+                block.text for block in response.content if getattr(block, "type", None) == "text"
+            )
+            if not text:
+                raise PairingSuggestionError(
+                    f"Claude returned an empty response (stop_reason: {response.stop_reason}). "
+                    "Try rephrasing your message."
+                )
+            logger.info("Claude API reply received (%d chars)", len(text))
+            return text
+
+        raise PairingSuggestionError("Claude kept requesting tool calls without finishing a reply. Try again.")
+
+    def _call_api(self, client, conversation: list[dict]):
+        """One Claude API call, wrapping any failure as PairingSuggestionError."""
         logger.info("Calling Claude API (model=%s, turns=%d)", self.model, len(conversation))
         try:
             response = client.messages.create(
                 model=self.model,
                 max_tokens=MAX_TOKENS,
+                tools=self.TOOLS,
                 messages=conversation,
             )
         except anthropic.APITimeoutError as e:
@@ -204,18 +357,91 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "Claude API response: stop_reason=%s, stop_details=%s, block_types=%s",
             response.stop_reason, getattr(response, "stop_details", None), block_types
         )
+        return response
 
-        text = "".join(
-            block.text for block in response.content if getattr(block, "type", None) == "text"
-        )
-        if not text:
-            raise PairingSuggestionError(
-                f"Claude returned an empty response (stop_reason: {response.stop_reason}). "
-                "Try rephrasing your message."
-            )
+    def _execute_tool(self, name: str, tool_input: Optional[dict]) -> str:
+        """Dispatch one Claude tool call to the matching data/db service query, returning a JSON
+        string (never raises - errors are reported back to Claude as {"error": ...} so it can
+        recover or explain rather than aborting the whole exchange)."""
+        handlers = {
+            "get_matches": self._tool_get_matches,
+            "get_player_stats": self._tool_get_player_stats,
+            "get_head_to_head": self._tool_get_head_to_head,
+            "get_partner_history": self._tool_get_partner_history,
+            "get_course_stats": self._tool_get_course_stats,
+            "get_player_course_performance": self._tool_get_player_course_performance,
+        }
+        handler = handlers.get(name)
+        if handler is None:
+            return json.dumps({"error": f"unknown tool '{name}'"})
 
-        logger.info("Claude API reply received (%d chars)", len(text))
-        return text
+        logger.info("Executing tool '%s' with input %s", name, tool_input)
+        try:
+            return handler(**(tool_input or {}))
+        except TypeError as e:
+            return json.dumps({"error": f"invalid arguments for '{name}': {e}"})
+        except Exception as e:
+            logger.warning("Tool '%s' failed: %s", name, e)
+            return json.dumps({"error": str(e)})
+
+    def _tool_get_matches(self, year: Optional[int] = None, match_type: Optional[str] = None,
+                           player: Optional[str] = None) -> str:
+        df = self.data_service.df
+        if df is None or df.empty:
+            return json.dumps({"matches": []})
+
+        if year is not None:
+            df = df[df['Year'] == int(year)]
+        if match_type:
+            df = df[df['MatchType'] == match_type]
+        if player:
+            df = df[
+                (df['BluePlayer1'] == player) | (df['BluePlayer2'] == player) |
+                (df['RedPlayer1'] == player) | (df['RedPlayer2'] == player)
+            ]
+        df = df[df['Result'].notna() & (df['Result'] != '')]
+
+        cols = ['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
+                'BluePlayer1', 'BluePlayer2', 'RedPlayer1', 'RedPlayer2', 'Result', 'Score']
+        df = df[cols].sort_values(by=['Year', 'Day', 'MatchNumber'])
+        return json.dumps({"matches": _df_records(df)}, default=_json_default)
+
+    def _tool_get_player_stats(self, player: str, match_type: Optional[str] = None,
+                                year: Optional[int] = None) -> str:
+        df = self.data_service.get_player_performance_all_players(match_type or None)
+        stats = None
+        if df is not None and not df.empty:
+            match = df[df['Player'] == player]
+            if not match.empty:
+                stats = _df_records(match)[0]
+
+        handicap = None
+        if year is not None:
+            try:
+                handicap = self.db_service.get_player_handicap(player, int(year))
+            except Exception:
+                handicap = None
+
+        return json.dumps({
+            "player": player, "match_type": match_type or "All",
+            "stats": stats, "handicap_index": handicap,
+        }, default=_json_default)
+
+    def _tool_get_head_to_head(self, player1: str, player2: str) -> str:
+        result = self.data_service.get_head_to_head_stats(player1, player2) or {}
+        return json.dumps({"player1": player1, "player2": player2, **result}, default=_json_default)
+
+    def _tool_get_partner_history(self, player: Optional[str] = None) -> str:
+        df = self.data_service.get_partner_performace(player or 'All')
+        return json.dumps({"partnerships": _df_records(df)}, default=_json_default)
+
+    def _tool_get_course_stats(self) -> str:
+        df = self.data_service.get_course_statistics()
+        return json.dumps({"courses": _df_records(df)}, default=_json_default)
+
+    def _tool_get_player_course_performance(self, player: str) -> str:
+        df = self.data_service.get_player_course_performance(player)
+        return json.dumps({"player": player, "courses": _df_records(df)}, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
