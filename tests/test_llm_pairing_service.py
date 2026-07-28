@@ -21,6 +21,14 @@ class FakeNonTextBlock:
         self.type = block_type
 
 
+class FakeToolUseBlock:
+    def __init__(self, tool_id, name, input_):
+        self.type = 'tool_use'
+        self.id = tool_id
+        self.name = name
+        self.input = input_
+
+
 class FakeMessage:
     def __init__(self, text=None, stop_reason='end_turn', stop_details=None, content=None):
         self.content = content if content is not None else ([FakeTextBlock(text)] if text is not None else [])
@@ -316,6 +324,162 @@ class TestPairingSuggester(unittest.TestCase):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
         self.assertIn('empty response', str(ctx.exception).lower())
+
+
+class TestPairingSuggesterTools(unittest.TestCase):
+    """Tests for the Claude tool-calling loop and the individual tool implementations that back
+    open-ended stats questions (match tightness, opponent strength, course/head-to-head records)."""
+
+    def setUp(self):
+        self.data_service = MagicMock()
+        self.db_service = MagicMock()
+
+        self.data_service.df = pd.DataFrame({
+            'Year': [2026, 2026],
+            'Day': [1, 2],
+            'MatchNumber': [1, 1],
+            'Course': ['Course A', 'Course B'],
+            'MatchType': ['Singles', 'Fourball'],
+            'BluePlayer1': ['Alice', 'Alice'],
+            'BluePlayer2': [None, 'Dave'],
+            'RedPlayer1': ['Bob', 'Bob'],
+            'RedPlayer2': [None, 'Carol'],
+            'Result': ['Blue', 'Half'],
+            'Score': ['3&2', 'AS'],
+        })
+        self.data_service.get_player_performance_all_players.return_value = pd.DataFrame({
+            'Player': ['Alice'],
+            'Matches': [4], 'Wins': [3], 'Losses': [1], 'Halves': [0],
+            'Points': [3], 'Win %': [75.0], 'PPG': [0.75],
+        })
+        self.data_service.get_head_to_head_stats.return_value = {
+            'matches': 2, 'player1_wins': 1, 'player2_wins': 0, 'halves': 1,
+        }
+        self.data_service.get_partner_performace.return_value = pd.DataFrame({
+            'partnership': ['Alice & Dave'], 'Matches': [1], 'Wins': [0],
+            'Halves': [1], 'Losses': [0], 'Points': [0.5], 'PPG': [0.5],
+        })
+        self.data_service.get_course_statistics.return_value = pd.DataFrame({
+            'Course': ['Course A'], 'Matches': [1], 'Blue_Wins': [1], 'Red_Wins': [0], 'Halves': [0],
+        })
+        self.data_service.get_player_course_performance.return_value = pd.DataFrame({
+            'Course': ['Course A'], 'Matches': [1], 'Wins': [1], 'Halves': [0], 'Losses': [0],
+            'Points': [1.0], 'PPG': [1.0],
+        })
+        self.db_service.get_player_handicap.return_value = 5.0
+
+    def _suggester(self):
+        return PairingSuggester(self.data_service, self.db_service, api_key='test-key', model='claude-test')
+
+    # ---- the tool-calling loop ----
+
+    def test_tool_use_round_trip_returns_final_text_and_feeds_result_back(self):
+        suggester = self._suggester()
+        tool_call = FakeMessage(
+            content=[FakeToolUseBlock('tool_1', 'get_matches', {'player': 'Alice'})],
+            stop_reason='tool_use',
+        )
+        final = FakeMessage("Alice won 3&2 on day 1 - not especially tight.")
+        fake_client = MagicMock()
+        fake_client.messages.create.side_effect = [tool_call, final]
+
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Was Alice's win tight?"
+            )
+
+        self.assertEqual(fake_client.messages.create.call_count, 2)
+        self.assertEqual(result['reply'], "Alice won 3&2 on day 1 - not especially tight.")
+
+        tool_result_turn = result['conversation'][-2]
+        self.assertEqual(tool_result_turn['role'], 'user')
+        tool_result_content = tool_result_turn['content'][0]['content']
+        self.assertIn('3&2', tool_result_content)
+        self.assertIn('Alice', tool_result_content)
+
+    def test_unrecognized_tool_reports_error_without_crashing_the_loop(self):
+        suggester = self._suggester()
+        tool_call = FakeMessage(
+            content=[FakeToolUseBlock('tool_1', 'not_a_real_tool', {})], stop_reason='tool_use',
+        )
+        final = FakeMessage("Sorry, I can't look that up.")
+        fake_client = MagicMock()
+        fake_client.messages.create.side_effect = [tool_call, final]
+
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="What's the weather?"
+            )
+
+        self.assertEqual(result['reply'], "Sorry, I can't look that up.")
+        tool_result_content = result['conversation'][-2]['content'][0]['content']
+        self.assertIn('unknown tool', tool_result_content)
+
+    def test_tool_loop_gives_up_after_max_iterations(self):
+        suggester = self._suggester()
+        looping_call = FakeMessage(
+            content=[FakeToolUseBlock('tool_1', 'get_course_stats', {})], stop_reason='tool_use',
+        )
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = looping_call
+
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertRaises(PairingSuggestionError) as ctx:
+                suggester.continue_conversation(
+                    'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Loop forever?"
+                )
+        self.assertIn('tool call', str(ctx.exception).lower())
+
+    # ---- individual tool implementations ----
+
+    def test_get_matches_filters_by_player_and_reports_score_margin(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'player': 'Alice'}))
+        self.assertEqual(len(payload['matches']), 2)
+        self.assertEqual(payload['matches'][0]['Score'], '3&2')
+
+    def test_get_matches_filters_by_year_and_match_type(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'year': 2026, 'match_type': 'Fourball'}))
+        self.assertEqual(len(payload['matches']), 1)
+        self.assertEqual(payload['matches'][0]['MatchType'], 'Fourball')
+
+    def test_get_player_stats_includes_record_and_handicap(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_player_stats', {'player': 'Alice', 'year': 2026}))
+        self.assertEqual(payload['stats']['Wins'], 3)
+        self.assertEqual(payload['handicap_index'], 5.0)
+
+    def test_get_player_stats_unknown_player_returns_no_stats(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_player_stats', {'player': 'Zed'}))
+        self.assertIsNone(payload['stats'])
+
+    def test_get_head_to_head_dispatches_to_data_service(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_head_to_head', {'player1': 'Alice', 'player2': 'Bob'}))
+        self.assertEqual(payload['matches'], 2)
+        self.data_service.get_head_to_head_stats.assert_called_once_with('Alice', 'Bob')
+
+    def test_get_partner_history_dispatches_to_data_service(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_partner_history', {'player': 'Alice'}))
+        self.assertEqual(payload['partnerships'][0]['partnership'], 'Alice & Dave')
+
+    def test_get_course_stats_returns_course_records(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_course_stats', {}))
+        self.assertEqual(payload['courses'][0]['Course'], 'Course A')
+
+    def test_get_player_course_performance_dispatches_to_data_service(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_player_course_performance', {'player': 'Alice'}))
+        self.assertEqual(payload['courses'][0]['Wins'], 1)
+
+    def test_unknown_tool_name_returns_json_error(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('nonexistent', {}))
+        self.assertIn('error', payload)
 
 
 if __name__ == '__main__':

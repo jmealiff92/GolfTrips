@@ -460,7 +460,7 @@ app.layout = html.Div([
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
             dbc.NavLink('➕ Add Match', href='/add-match', active='exact', id='nav-add-match'),
             dbc.NavLink('✏️ Edit Matches', href='/edit-matches', active='exact', id='nav-edit-matches'),
-            dbc.NavLink('🤝 Suggest Pairings', href='/suggest-pairings', active='exact', id='nav-suggest-pairings'),
+            dbc.NavLink('⛳ Captain Claude', href='/suggest-pairings', active='exact', id='nav-suggest-pairings'),
             dbc.NavLink('⚔️ Head-to-Head', href='/head-to-head', active='exact'),
             dbc.NavLink('📈 Course Stats', href='/course-stats', active='exact'),
         ], pills=True, style={'marginBottom': '30px', 'justifyContent': 'center', 'flexWrap': 'wrap'}),
@@ -1258,10 +1258,11 @@ def create_suggest_pairings_page():
     current_year = real_current_year if real_current_year in years else years[0]
 
     return html.Div([
-        html.H2("Suggest Fourball Pairings", style={'marginBottom': '10px', 'textAlign': 'center'}),
+        html.H2("Captain Claude", style={'marginBottom': '10px', 'textAlign': 'center'}),
         html.P(
             "Pick a team's available players for the day and Claude will suggest fourball partnerships, "
-            "based on individual performance, historical partner synergy, and handicaps.",
+            "based on individual performance, historical partner synergy, and handicaps. You can also just "
+            "chat below and ask Captain Claude anything about the trip's matches, players, or courses.",
             className='text-muted', style={'textAlign': 'center', 'marginBottom': '30px'}
         ),
 
@@ -1305,10 +1306,11 @@ def create_suggest_pairings_page():
 
         dbc.Card([
             dbc.CardBody([
-                html.H4("Chat About Pairings", className='mb-3'),
+                html.H4("Chat with Captain Claude", className='mb-3'),
                 html.P(
-                    "Ask Claude about these players, propose your own pairing and get feedback, or "
-                    "just start chatting — no need to generate suggestions first.",
+                    "Ask about these players, propose your own pairing and get feedback, or ask any "
+                    "open-ended stats question — tightest matches, toughest opposition, course records, "
+                    "and more. No need to generate suggestions first.",
                     className='text-muted', style={'marginBottom': '15px'}
                 ),
                 ChatComponent(
@@ -1316,7 +1318,7 @@ def create_suggest_pairings_page():
                     messages=[],
                     theme='light',
                     fill_width=True,
-                    input_placeholder='Ask about pairings, or propose your own...',
+                    input_placeholder='Ask about pairings, stats, or anything about the trip...',
                 ),
             ])
         ], className='shadow mt-4'),
