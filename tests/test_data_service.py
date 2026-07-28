@@ -183,6 +183,12 @@ class TestDataService(unittest.TestCase):
         self.assertEqual(self.data_service.get_match_result_for_player('Half', 'Blue'), 'Half')
         self.assertEqual(self.data_service.get_match_result_for_player('Half', 'Red'), 'Half')
 
+        # Test no result logged yet - should be Pending, not a loss for either team
+        self.assertEqual(self.data_service.get_match_result_for_player('', 'Blue'), 'Pending')
+        self.assertEqual(self.data_service.get_match_result_for_player('', 'Red'), 'Pending')
+        self.assertEqual(self.data_service.get_match_result_for_player(None, 'Blue'), 'Pending')
+        self.assertEqual(self.data_service.get_match_result_for_player(None, 'Red'), 'Pending')
+
     def test_get_player_performance_all_players_empty_df(self):
         """Test player performance with empty dataframe"""
         with patch.object(self.data_service, 'build_results_per_player', return_value=pd.DataFrame()):
@@ -230,6 +236,28 @@ class TestDataService(unittest.TestCase):
             self.assertEqual(len(result), 2)  # John and Bob
             john_stats = result[result['Player'] == 'John'].iloc[0]
             self.assertEqual(john_stats['Matches'], 1)  # Only one Fourball match
+
+    def test_get_player_performance_all_players_excludes_pending(self):
+        """Matches with no result logged yet should not count as a loss for anyone"""
+        sample_results = pd.DataFrame({
+            'Player': ['John', 'John', 'Bob', 'Bob'],
+            'Year': [2023, 2023, 2023, 2023],
+            'Result': ['Win', 'Pending', 'Pending', 'Half'],
+            'MatchType': ['Fourball', 'Singles', 'Fourball', 'Singles']
+        })
+
+        with patch.object(self.data_service, 'build_results_per_player', return_value=sample_results):
+            result = self.data_service.get_player_performance_all_players()
+
+            john_stats = result[result['Player'] == 'John'].iloc[0]
+            self.assertEqual(john_stats['Matches'], 1)
+            self.assertEqual(john_stats['Wins'], 1)
+            self.assertEqual(john_stats['Losses'], 0)
+
+            bob_stats = result[result['Player'] == 'Bob'].iloc[0]
+            self.assertEqual(bob_stats['Matches'], 1)
+            self.assertEqual(bob_stats['Losses'], 0)
+            self.assertEqual(bob_stats['Halves'], 1)
 
     def test_get_head_to_head_stats(self):
         """Test head-to-head stats delegation"""
@@ -345,6 +373,26 @@ class TestDataService(unittest.TestCase):
             # Should only include partnerships with 2+ matches
             self.assertTrue(all(result['Matches'] >= 2))
 
+    def test_get_partner_performace_excludes_pending(self):
+        """Matches with no result logged yet should not count as a loss for the partnership"""
+        sample_player_matches = pd.DataFrame({
+            'player_name': ['John', 'John'],
+            'partner_name': ['Mike', 'Mike'],
+            'result': ['Win', 'Pending'],
+            'match_type': ['Fourball', 'Fourball'],
+            'year': [2023, 2023],
+            'match_number': [1, 2],
+            'day': [1, 1]
+        })
+
+        with patch.object(self.data_service, 'build_player_matches', return_value=sample_player_matches):
+            result = self.data_service.get_partner_performace()
+
+            partnership = result.iloc[0]
+            self.assertEqual(partnership['Matches'], 1)
+            self.assertEqual(partnership['Wins'], 1)
+            self.assertEqual(partnership['Losses'], 0)
+
 
 class TestUtilityFunctions(unittest.TestCase):
     """Unit tests for utility functions"""
@@ -374,6 +422,12 @@ class TestUtilityFunctions(unittest.TestCase):
         # Test half scenarios
         self.assertEqual(get_match_result_for_player('Half', 'Blue'), 'Half')
         self.assertEqual(get_match_result_for_player('Half', 'Red'), 'Half')
+
+        # Test no result logged yet - should be Pending, not a loss for either team
+        self.assertEqual(get_match_result_for_player('', 'Blue'), 'Pending')
+        self.assertEqual(get_match_result_for_player('', 'Red'), 'Pending')
+        self.assertEqual(get_match_result_for_player(None, 'Blue'), 'Pending')
+        self.assertEqual(get_match_result_for_player(None, 'Red'), 'Pending')
 
 
 if __name__ == '__main__':

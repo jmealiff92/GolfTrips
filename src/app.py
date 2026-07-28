@@ -1731,13 +1731,14 @@ def update_player_details(player):
     results = data_service.build_results_per_player()
     player_results = results[results['Player'] == player]
 
-    # Summary stats
-    stats = player_results['Result'].value_counts().to_dict()
+    # Summary stats (exclude matches with no result logged yet)
+    decided_results = player_results[player_results['Result'] != 'Pending']
+    stats = decided_results['Result'].value_counts().to_dict()
     wins = stats.get('Win', 0)
     halves = stats.get('Half', 0)
     losses = stats.get('Loss', 0)
     points = wins + (halves * 0.5)
-    win_pct = ((wins + (halves / 2)) / len(player_results) * 100) if len(player_results) > 0 else 0
+    win_pct = ((wins + (halves / 2)) / len(decided_results) * 100) if len(decided_results) > 0 else 0
 
     # Player matches
     df = data_service.df
@@ -1750,8 +1751,9 @@ def update_player_details(player):
         lambda row: 'Blue' if player in [row['BluePlayer1'], row['BluePlayer2']] else 'Red', axis=1
     )
     player_matches['Outcome'] = player_matches.apply(
-        lambda row: 'Win' if row['Result'] == row['Player_Team']
-        else ('Loss' if row['Result'] != 'Half' else 'Half'), axis=1
+        lambda row: 'Pending' if not row['Result']
+        else ('Win' if row['Result'] == row['Player_Team']
+        else ('Loss' if row['Result'] != 'Half' else 'Half')), axis=1
     )
 
     def get_partner(row):
@@ -1845,18 +1847,20 @@ def update_player_details(player):
              ((player_matches['BluePlayer1'] == opponent) | (player_matches['BluePlayer2'] == opponent)))
         ]
 
-        if len(opp_matches) > 0:
-            opp_stats = opp_matches['Outcome'].value_counts().to_dict()
+        # Exclude matches with no result logged yet - they aren't wins or losses
+        decided_opp_matches = opp_matches[opp_matches['Outcome'] != 'Pending']
+        if len(decided_opp_matches) > 0:
+            opp_stats = decided_opp_matches['Outcome'].value_counts().to_dict()
             opp_wins = opp_stats.get('Win', 0)
             opp_halves = opp_stats.get('Half', 0)
             opp_losses = opp_stats.get('Loss', 0)
             opp_points = opp_wins + (opp_halves * 0.5)
-            ppg = opp_points / len(opp_matches)
-            opp_win_pct = ((opp_wins + (opp_halves * 0.5)) / len(opp_matches) * 100) if len(opp_matches) > 0 else 0
+            ppg = opp_points / len(decided_opp_matches)
+            opp_win_pct = ((opp_wins + (opp_halves * 0.5)) / len(decided_opp_matches) * 100) if len(decided_opp_matches) > 0 else 0
 
             opponent_stats.append({
                 'Opponent': opponent,
-                'Matches': len(opp_matches),
+                'Matches': len(decided_opp_matches),
                 'Wins': opp_wins,
                 'Halves': opp_halves,
                 'Losses': opp_losses,
