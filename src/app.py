@@ -1,5 +1,6 @@
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, callback_context, no_update
+from dash import dcc, html, dash_table, Input, Output, State, callback_context, no_update, DiskcacheManager
+import diskcache
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -49,6 +50,13 @@ data_service = DataService(db_service)
 logger.info("Data service initialized successfully")
 pairing_suggester = PairingSuggester(data_service, db_service)
 
+# Background callback manager for slow, external-API-bound callbacks (Captain Claude's pairing
+# suggestions/chat) - runs them in a subprocess and returns the initial HTTP response immediately,
+# so a long Claude call can't get killed by a proxy/Gunicorn request timeout. The frontend polls a
+# small status endpoint instead of holding one connection open for the whole call.
+cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
+background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
+
 # Initialize Dash app with improved theme
 app = dash.Dash(
     __name__,
@@ -58,6 +66,7 @@ app = dash.Dash(
     # Performance optimizations
     compress=True,  # Enable gzip compression
     update_title=None,  # Disable title updates for performance
+    background_callback_manager=background_callback_manager,
 )
 logger.info("Dash app initialized with compression enabled")
 
@@ -1303,6 +1312,11 @@ def create_suggest_pairings_page():
         dcc.Loading(html.Div(id='pairing-suggestions-output'), type='default'),
 
         dcc.Store(id='pairing-conversation-store', data=None),
+        # Set only after admin/validation checks pass in a foreground callback; the actual Claude
+        # call runs in a background callback triggered off these, so a slow/cold-started API call
+        # can't be killed by a proxy or Gunicorn request timeout.
+        dcc.Store(id='pairing-suggest-trigger', data=None),
+        dcc.Store(id='pairing-chat-trigger', data=None),
 
         dbc.Card([
             dbc.CardBody([
@@ -2402,7 +2416,9 @@ def update_teams_display(year):
     [Output('pairing-available-players', 'options'),
      Output('pairing-available-players', 'value'),
      Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+     Output('pairing-chat-component', 'messages', allow_duplicate=True),
+     Output('pairing-suggest-trigger', 'data', allow_duplicate=True),
+     Output('pairing-chat-trigger', 'data', allow_duplicate=True)],
     [Input('pairing-year-filter', 'value'),
      Input('pairing-team-filter', 'value')],
     prevent_initial_call='initial_duplicate'
@@ -2411,14 +2427,14 @@ def update_pairing_roster(year, team):
     """Restrict the available-players checklist to the selected team's roster for the year.
 
     A changed roster invalidates whatever chat context was seeded before, so this also resets
-    the chat conversation/log.
+    the chat conversation/log and any pending background-callback trigger.
     """
     if not year or not team:
-        return [], [], None, []
+        return [], [], None, [], None, None
 
     assignments = db_service.get_team_assignments_by_year(year)
     roster = sorted(a['name'] for a in assignments if a['team'] == team)
-    return [{'label': p, 'value': p} for p in roster], [], None, []
+    return [{'label': p, 'value': p} for p in roster], [], None, [], None, None
 
 
 # Enable/disable the Suggest Pairings button based on the selected player count
@@ -2440,25 +2456,50 @@ def validate_pairing_selection(selected):
     return False, None
 
 
-# Generate Claude-suggested pairings for the selected team
+# Validate + gate the "Suggest Pairings" click in the normal (foreground) request, where
+# check_admin_access() has access to the Flask session - background callbacks run in a
+# separate subprocess without one. Only kicks off the (slow, Claude-calling) background
+# callback below once access is confirmed.
 @app.callback(
     [Output('pairing-suggestions-output', 'children'),
-     Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+     Output('pairing-suggest-trigger', 'data')],
     Input('btn-suggest-pairings', 'n_clicks'),
     [State('pairing-year-filter', 'value'),
      State('pairing-team-filter', 'value'),
      State('pairing-available-players', 'value')],
     prevent_initial_call=True
 )
-def generate_pairing_suggestions(n_clicks, year, team, available_players):
+def stage_pairing_suggestion_request(n_clicks, year, team, available_players):
     if not n_clicks:
-        return no_update, no_update, no_update
+        return no_update, no_update
 
     # Suggestions call a paid external API, so gate like other admin actions
     has_access, error_alert = check_admin_access()
     if not has_access:
-        return error_alert, no_update, no_update
+        return error_alert, no_update
+
+    # dcc.Loading (wrapping pairing-suggestions-output) picks up the background callback below
+    # as "loading" automatically, so leave the output alone and just hand off the request.
+    return no_update, {'n_clicks': n_clicks, 'year': year, 'team': team, 'available_players': available_players}
+
+
+# Generate Claude-suggested pairings for the selected team. Runs as a background callback (in a
+# subprocess, via DiskcacheManager) since a tool-calling Claude exchange can take well past a
+# typical proxy/Gunicorn request timeout - this returns the initial HTTP response immediately and
+# lets the frontend poll for the result instead of holding one connection open for the whole call.
+@app.callback(
+    [Output('pairing-suggestions-output', 'children', allow_duplicate=True),
+     Output('pairing-conversation-store', 'data', allow_duplicate=True),
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    Input('pairing-suggest-trigger', 'data'),
+    prevent_initial_call=True,
+    background=True,
+)
+def generate_pairing_suggestions(trigger):
+    if not trigger:
+        return no_update, no_update, no_update
+
+    year, team, available_players = trigger['year'], trigger['team'], trigger['available_players']
 
     try:
         result = pairing_suggester.suggest_pairings(team, year, available_players or [])
@@ -2501,11 +2542,13 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
     )
 
 
-# Send a chat message: continues the pairing conversation, seeding it locally (no API call)
-# if this is the first message and no suggestion has been generated yet
+# Stage a chat message: validates/gates it in the normal (foreground) request - where
+# check_admin_access() has access to the Flask session, unlike the background callback below -
+# and immediately echoes the user's own bubble into the chat. Only kicks off the background
+# callback (the actual Claude call) once validation passes.
 @app.callback(
-    [Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    [Output('pairing-chat-component', 'messages', allow_duplicate=True),
+     Output('pairing-chat-trigger', 'data')],
     Input('pairing-chat-component', 'new_message'),
     [State('pairing-chat-component', 'messages'),
      State('pairing-year-filter', 'value'),
@@ -2514,7 +2557,7 @@ def generate_pairing_suggestions(n_clicks, year, team, available_players):
      State('pairing-conversation-store', 'data')],
     prevent_initial_call=True
 )
-def send_pairing_chat_message(new_message, messages, year, team, available_players, conversation):
+def stage_pairing_chat_message(new_message, messages, year, team, available_players, conversation):
     if not new_message:
         return no_update, no_update
 
@@ -2526,7 +2569,7 @@ def send_pairing_chat_message(new_message, messages, year, team, available_playe
             'role': 'assistant',
             'content': '⚠️ Only text messages are supported right now.',
         }]
-        return no_update, messages
+        return messages, no_update
 
     user_message = content.strip()
     if not user_message:
@@ -2538,26 +2581,52 @@ def send_pairing_chat_message(new_message, messages, year, team, available_playe
         team, year, len(available_players or []), len(user_message)
     )
 
+    if not available_players:
+        messages.append({
+            'id': int(time.time() * 1000),
+            'role': 'assistant',
+            'content': '⚠️ Select at least one available player above before chatting.',
+        })
+        return messages, no_update
+
+    has_access, _ = check_admin_access()
+    if not has_access:
+        messages.append({
+            'id': int(time.time() * 1000),
+            'role': 'assistant',
+            'content': '⚠️ You do not have permission to perform this action. Admin access required.',
+        })
+        return messages, no_update
+
+    return messages, {
+        'team': team, 'year': year, 'available_players': available_players,
+        'conversation': conversation, 'user_message': user_message,
+    }
+
+
+# Continue the pairing conversation, seeding it locally (no API call) if this is the first
+# message and no suggestion has been generated yet. Runs as a background callback (in a
+# subprocess, via DiskcacheManager) since a tool-calling Claude exchange can take well past a
+# typical proxy/Gunicorn request timeout - this returns the initial HTTP response immediately and
+# lets the frontend poll for the result instead of holding one connection open for the whole call.
+@app.callback(
+    [Output('pairing-conversation-store', 'data', allow_duplicate=True),
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    Input('pairing-chat-trigger', 'data'),
+    State('pairing-chat-component', 'messages'),
+    prevent_initial_call=True,
+    background=True,
+)
+def run_pairing_chat_message_background(trigger, messages):
+    if not trigger:
+        return no_update, no_update
+
+    team, year = trigger['team'], trigger['year']
+    messages = list(messages or [])
+
     try:
-        if not available_players:
-            messages.append({
-                'id': int(time.time() * 1000),
-                'role': 'assistant',
-                'content': '⚠️ Select at least one available player above before chatting.',
-            })
-            return no_update, messages
-
-        has_access, _ = check_admin_access()
-        if not has_access:
-            messages.append({
-                'id': int(time.time() * 1000),
-                'role': 'assistant',
-                'content': '⚠️ You do not have permission to perform this action. Admin access required.',
-            })
-            return no_update, messages
-
         result = pairing_suggester.continue_conversation(
-            team, year, available_players, conversation, user_message
+            team, year, trigger['available_players'], trigger['conversation'], trigger['user_message']
         )
         logger.info("Pairing chat reply sent (%d chars)", len(result['reply']))
         messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': result['reply']})
