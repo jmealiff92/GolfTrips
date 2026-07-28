@@ -16,8 +16,9 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 MAX_ATTEMPTS = 2
+MAX_TOKENS = 4096
 
 
 class PairingSuggestionError(Exception):
@@ -173,7 +174,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         try:
             response = client.messages.create(
                 model=self.model,
-                max_tokens=1500,
+                max_tokens=MAX_TOKENS,
                 messages=conversation,
             )
         except anthropic.APITimeoutError as e:
