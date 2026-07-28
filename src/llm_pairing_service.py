@@ -68,7 +68,8 @@ class PairingSuggester:
             "description": (
                 "Look up individual match results, including each match's score/margin "
                 "(e.g. '3&2', '1 up', 'AS') so you can judge how tight or lopsided it was, and "
-                "exactly who played whom. Filter by any combination of year, match type, or player."
+                "exactly who played whom. Only returns matches with a decided result - pending/"
+                "unfinalized matches are omitted. Filter by any combination of year, match type, or player."
             ),
             "input_schema": {
                 "type": "object",
@@ -137,7 +138,15 @@ class PairingSuggester:
         },
         {
             "name": "get_player_course_performance",
-            "description": "One player's win/loss/half record broken down by course.",
+            "description": (
+                "One player's win/loss/half record broken down by course. Unlike get_matches and "
+                "get_player_stats, `Matches` here counts every match recorded at that course "
+                "including ones with no result yet - the `Pending` field on each course tells you "
+                "how many of those are still unfinalized (Matches minus Wins, Halves, and Losses). "
+                "When Pending is non-zero, mention it rather than letting the totals look "
+                "inconsistent, e.g. 'Jeff is 2-0 at Druids Heath with 1 match still pending' - this "
+                "matters for pairing decisions since only decided results are real signal."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"player": {"type": "string"}},
@@ -295,6 +304,12 @@ You also have tools to look up match-by-match results (including each match's sc
 how tight or lopsided it was), a player's full stats or handicap for a given year, head-to-head records \
 between two players, partner history, and course-by-course performance. Use them whenever a question \
 needs more detail than the summary above.
+
+PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
+ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \
+count decided matches. When a course breakdown includes pending matches, say so explicitly (e.g. \
+"2-0 completed at Druids Heath, 1 match still pending") rather than treating the raw match count as \
+decided results - this matters for pairing decisions since only locked-in results are real signal.
 
 SCOPE - the Fourball-only data above is for judging pairings. It is NOT the player's overall record. \
 If the admin asks a general question about a player (their record, how good they are, how they've been \
@@ -472,6 +487,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_player_course_performance(self, player: str) -> str:
         df = self.data_service.get_player_course_performance(player)
+        if df is not None and not df.empty:
+            df = df.copy()
+            df['Pending'] = df['Matches'] - (df['Wins'] + df['Halves'] + df['Losses'])
         return json.dumps({"player": player, "courses": _df_records(df)}, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
