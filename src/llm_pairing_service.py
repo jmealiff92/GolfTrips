@@ -248,6 +248,7 @@ Admin: {user_message}"""
     def _build_context_block(self, team: str, year: int, players: list[str]) -> str:
         player_stats_text = self._format_player_stats(players, year)
         partner_history_text = self._format_partner_history(players)
+        match_history_text = self._format_match_history(players)
 
         return f"""You are Captain Claude, helping a golf trip organizer with fourball (better-ball) \
 partnerships for {year} and with any other questions they have about the trip's matches, players, and \
@@ -267,6 +268,16 @@ Individual Fourball performance to date:
 Historical partner synergy (Fourball matches only):
 {partner_history_text}
 
+Match-by-match Fourball results, with each score's margin (e.g. "1 down" or "2&1" is a very close \
+result; "5&4" or "6&5" is a blowout; "AS"/halved means the match was tied after 18):
+{match_history_text}
+
+IMPORTANT - weigh the margins above, not just the raw win/loss tally: a player who is 1-3 but each \
+loss was 1 down or 2&1 has been performing much better than the record suggests and shouldn't be \
+treated as weak; a player who is 3-1 but every win was narrow and the loss was a 6&5 blowout isn't \
+automatically the stronger pick either. Use the closeness of results, not just win/loss counts, when \
+judging how well a player is likely to perform and who they're best paired with.
+
 You also have tools to look up match-by-match results (including each match's score/margin, to judge \
 how tight or lopsided it was), a player's full stats or handicap for a given year, head-to-head records \
 between two players, partner history, and course-by-course performance. Use them whenever a question \
@@ -278,8 +289,9 @@ or how strong the opposition they faced has been.
         context = self._build_context_block(team, year, players)
         return f"""{context}
 Task: produce the best possible set of {len(players) // 2} pairings for {team} from these {len(players)} \
-players, using their individual records, historical synergy as partners, and handicaps to judge how well \
-each pair is likely to perform. Every player must appear in exactly one pair.
+players, using their individual records (informed by match margins as above, not just win/loss counts), \
+historical synergy as partners, and handicaps to judge how well each pair is likely to perform. Every \
+player must appear in exactly one pair.
 
 Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact shape:
 {{"pairings": [{{"players": ["PlayerA", "PlayerB"], "rationale": "one or two sentence justification"}}]}}
@@ -471,6 +483,45 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             else:
                 lines.append(f"- {name}: handicap index {handicap_text}, no Fourball match history yet")
         return "\n".join(lines) if lines else "No players supplied."
+
+    def _format_match_history(self, players: list[str], match_type: str = 'Fourball') -> str:
+        try:
+            df = self.data_service.df
+        except Exception:
+            df = None
+        if df is None or df.empty:
+            return "No match history yet."
+
+        df = df[df['MatchType'] == match_type]
+        df = df[df['Result'].notna() & (df['Result'] != '')]
+        if df.empty:
+            return f"No {match_type} match history yet."
+
+        lines = []
+        for name in players:
+            player_df = df[
+                (df['BluePlayer1'] == name) | (df['BluePlayer2'] == name) |
+                (df['RedPlayer1'] == name) | (df['RedPlayer2'] == name)
+            ].sort_values(by=['Year', 'Day', 'MatchNumber'])
+
+            if player_df.empty:
+                lines.append(f"- {name}: no {match_type} match history yet")
+                continue
+
+            results = []
+            for _, m in player_df.iterrows():
+                player_side = 'Blue' if name in (m['BluePlayer1'], m['BluePlayer2']) else 'Red'
+                if m['Result'] == 'Half':
+                    outcome = 'halved'
+                elif m['Result'] == player_side:
+                    outcome = 'won'
+                else:
+                    outcome = 'lost'
+                score = m['Score'] if m['Score'] else 'no score recorded'
+                results.append(f"{m['Year']} Day {int(m['Day'])}: {outcome} {score}")
+            lines.append(f"- {name}: " + "; ".join(results))
+
+        return "\n".join(lines)
 
     def _format_partner_history(self, players: list[str]) -> str:
         try:

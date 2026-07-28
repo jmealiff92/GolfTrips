@@ -118,6 +118,12 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertIn('Alice & Bob', prompt)
         self.assertIn('2 matches together', prompt)
 
+    def test_prompt_includes_margin_weighting_guidance(self):
+        suggester = self._suggester()
+        prompt = suggester._build_suggestion_prompt('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('Match-by-match Fourball results', prompt)
+        self.assertIn('not just the raw win/loss tally', prompt)
+
     # ---- response parsing/validation ----
 
     def test_successful_response_parsed_into_pairings(self):
@@ -480,6 +486,32 @@ class TestPairingSuggesterTools(unittest.TestCase):
         suggester = self._suggester()
         payload = json.loads(suggester._execute_tool('nonexistent', {}))
         self.assertIn('error', payload)
+
+    # ---- match history / margin context fed into pairing decisions ----
+
+    def test_format_match_history_reports_score_margin_and_outcome(self):
+        suggester = self._suggester()
+        text = suggester._format_match_history(['Alice', 'Bob'])
+        self.assertIn('Alice', text)
+        self.assertIn('Bob', text)
+        self.assertIn('halved AS', text)
+
+    def test_format_match_history_respects_match_type_and_reports_win_margin(self):
+        suggester = self._suggester()
+        text = suggester._format_match_history(['Alice'], match_type='Singles')
+        self.assertIn('won 3&2', text)
+
+    def test_format_match_history_player_with_no_history(self):
+        suggester = self._suggester()
+        text = suggester._format_match_history(['Zed'])
+        self.assertIn('no Fourball match history yet', text)
+
+    def test_context_block_includes_match_history_and_margin_guidance(self):
+        suggester = self._suggester()
+        context = suggester._build_context_block('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('Match-by-match Fourball results', context)
+        self.assertIn('halved AS', context)
+        self.assertIn('not just the raw win/loss tally', context)
 
 
 if __name__ == '__main__':
