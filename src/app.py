@@ -2411,7 +2411,7 @@ def update_teams_display(year):
 
 # ============ Suggest Pairings Callbacks ============
 
-# Populate the available-players checklist for the selected year/team, and reset chat
+# Populate the available-players checklist for the selected year/team; reset chat only on a year change
 @app.callback(
     [Output('pairing-available-players', 'options'),
      Output('pairing-available-players', 'value'),
@@ -2426,15 +2426,23 @@ def update_teams_display(year):
 def update_pairing_roster(year, team):
     """Restrict the available-players checklist to the selected team's roster for the year.
 
-    A changed roster invalidates whatever chat context was seeded before, so this also resets
-    the chat conversation/log and any pending background-callback trigger.
+    Chat context now covers both teams' full rosters for the year (see
+    PairingSuggester._build_chat_context_block), so only a changed year invalidates it - the team
+    filter just changes which roster is checkable for pairing suggestions, and the chat still
+    knows about every player regardless. A year change resets the chat conversation/log and any
+    pending background-callback trigger; a team-only change leaves the chat alone.
     """
     if not year or not team:
         return [], [], None, [], None, None
 
     assignments = db_service.get_team_assignments_by_year(year)
     roster = sorted(a['name'] for a in assignments if a['team'] == team)
-    return [{'label': p, 'value': p} for p in roster], [], None, [], None, None
+    options = [{'label': p, 'value': p} for p in roster]
+
+    trigger_id = callback_context.triggered[0]['prop_id'].split('.')[0] if callback_context.triggered else None
+    if trigger_id == 'pairing-team-filter':
+        return options, [], no_update, no_update, no_update, no_update
+    return options, [], None, [], None, None
 
 
 # Enable/disable the Suggest Pairings button based on the selected player count
