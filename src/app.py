@@ -2589,14 +2589,6 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
         team, year, len(available_players or []), len(user_message)
     )
 
-    if not available_players:
-        messages.append({
-            'id': int(time.time() * 1000),
-            'role': 'assistant',
-            'content': '⚠️ Select at least one available player above before chatting.',
-        })
-        return messages, no_update
-
     has_access, _ = check_admin_access()
     if not has_access:
         messages.append({
