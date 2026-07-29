@@ -469,7 +469,7 @@ app.layout = html.Div([
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
             dbc.NavLink('➕ Add Match', href='/add-match', active='exact', id='nav-add-match'),
             dbc.NavLink('✏️ Edit Matches', href='/edit-matches', active='exact', id='nav-edit-matches'),
-            dbc.NavLink('⛳ Captain Claude', href='/suggest-pairings', active='exact', id='nav-suggest-pairings'),
+            dbc.NavLink('⛳ Captain Claude', href='/captain-claude', active='exact', id='nav-suggest-pairings'),
             dbc.NavLink('⚔️ Head-to-Head', href='/head-to-head', active='exact'),
             dbc.NavLink('📈 Course Stats', href='/course-stats', active='exact'),
         ], pills=True, style={'marginBottom': '30px', 'justifyContent': 'center', 'flexWrap': 'wrap'}),
@@ -1490,7 +1490,7 @@ def display_page(pathname):
         return create_add_match_page()
     elif pathname == '/edit-matches':
         return create_edit_matches_page()
-    elif pathname == '/suggest-pairings':
+    elif pathname == '/captain-claude':
         return create_suggest_pairings_page()
     elif pathname == '/head-to-head':
         return create_head_to_head_page()
