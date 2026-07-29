@@ -60,7 +60,7 @@ background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
 # Initialize Dash app with improved theme
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.FLATLY],  # Modern, clean theme
+    external_stylesheets=[dbc.themes.DARKLY],  # Dark base theme (Night Round)
     suppress_callback_exceptions=True,
     title="Golf Trips",
     # Performance optimizations
@@ -158,115 +158,134 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
-            /* Golf Green Color Scheme */
+            /* Night Round: a dark, lume-green fairway theme */
             :root {
-                --golf-green-dark: #1b5e20;
-                --golf-green: #2e7d32;
-                --golf-green-light: #4caf50;
-                --golf-green-accent: #66bb6a;
-                --fairway-green: #81c784;
+                --night-bg-0: #0b1a12;
+                --night-bg-1: #10201a;
+                --night-bg-2: #152a20;
+                --night-bg-3: #16281f;
+                --night-line: #254333;
+                --night-ink: #dce8de;
+                --night-ink-soft: #8fd6a4;
+                --night-title: #eafff0;
+                --night-accent: #4ade80;
+                --night-accent-strong: #22c55e;
+                --night-accent-ink: #0b1a12;
+                --night-amber: #f5a623;
+                --night-row-alt: #122419;
             }
 
             body {
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #4caf50 100%);
+                background: linear-gradient(135deg, var(--night-bg-0) 0%, var(--night-bg-1) 50%, var(--night-bg-3) 100%);
+                color: var(--night-ink);
                 min-height: 100vh;
             }
 
             .main-container {
-                background: #fafafa;
+                background: var(--night-bg-1);
+                border: 1px solid var(--night-line);
                 border-radius: 15px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5);
                 margin: 20px auto;
                 max-width: 1400px;
                 padding: 30px;
             }
 
+            .main-container h2, .main-container h3, .main-container h4, .main-container label {
+                color: var(--night-title);
+            }
+
             .header-title {
-                background: linear-gradient(135deg, #1b5e20 0%, #4caf50 100%);
+                background: linear-gradient(135deg, var(--night-accent) 0%, var(--night-ink-soft) 50%, var(--night-title) 100%);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
                 font-weight: 700;
                 font-size: 2.5rem;
                 text-align: center;
                 margin-bottom: 30px;
-                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                text-shadow: 0 0 20px rgba(74, 222, 128, 0.25);
             }
 
             /* Navigation Styling */
             .nav-pills .nav-link {
+                background-color: var(--night-bg-3);
                 border-radius: 25px;
                 margin: 0 5px;
                 margin-bottom: 10px;
                 transition: all 0.3s ease;
-                color: #2e7d32;
+                color: var(--night-ink-soft);
                 font-weight: 500;
             }
 
             .nav-pills .nav-link.active {
-                background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%) !important;
-                color: white !important;
-                box-shadow: 0 4px 15px rgba(46, 125, 50, 0.4);
+                background: linear-gradient(135deg, var(--night-accent-strong) 0%, var(--night-accent) 100%) !important;
+                color: var(--night-accent-ink) !important;
+                box-shadow: 0 4px 15px rgba(74, 222, 128, 0.4);
             }
 
             .nav-pills .nav-link:hover:not(.active) {
-                background-color: rgba(46, 125, 50, 0.1);
+                background-color: rgba(74, 222, 128, 0.15);
                 transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             }
 
             /* Card Styling */
             .card {
-                border: 1px solid #e0e0e0;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+                border: 1px solid var(--night-line);
+                box-shadow: 0 2px 10px rgba(0,0,0,0.35);
                 border-radius: 10px;
                 transition: all 0.3s ease;
-                background: white;
+                background: var(--night-bg-2);
+                color: var(--night-ink);
             }
 
             .card:hover {
-                box-shadow: 0 5px 20px rgba(46, 125, 50, 0.15);
-                border-color: #81c784;
+                box-shadow: 0 5px 20px rgba(74, 222, 128, 0.15);
+                border-color: var(--night-accent);
             }
 
             .card-header {
-                background: linear-gradient(135deg, #f1f8f4 0%, #e8f5e9 100%);
-                border-bottom: 2px solid #81c784;
+                background: linear-gradient(135deg, var(--night-bg-3) 0%, #1b3324 100%);
+                border-bottom: 2px solid var(--night-line);
                 font-weight: 600;
-                color: #1b5e20;
+                color: var(--night-ink-soft);
             }
 
             /* Button Styling */
             .btn-primary {
-                background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%);
+                background: linear-gradient(135deg, var(--night-accent-strong) 0%, var(--night-accent) 100%);
                 border: none;
                 border-radius: 25px;
                 padding: 10px 30px;
                 transition: all 0.3s ease;
-                font-weight: 500;
+                font-weight: 600;
+                color: var(--night-accent-ink);
             }
 
             .btn-primary:hover {
-                background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
+                background: linear-gradient(135deg, var(--night-accent) 0%, #86efac 100%);
                 transform: translateY(-2px);
-                box-shadow: 0 5px 15px rgba(46, 125, 50, 0.4);
+                box-shadow: 0 5px 15px rgba(74, 222, 128, 0.4);
+                color: var(--night-accent-ink);
             }
 
             .btn-success {
-                background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%);
+                background: linear-gradient(135deg, var(--night-accent-strong) 0%, var(--night-accent) 100%);
                 border: none;
                 border-radius: 25px;
+                color: var(--night-accent-ink);
             }
 
             .btn-danger {
                 border-radius: 25px;
             }
 
-            /* Table Styling - Much Better! */
+            /* Table Styling */
             .dash-table-container {
                 border-radius: 10px;
                 overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.4);
             }
 
             .dash-spreadsheet {
@@ -278,10 +297,10 @@ app.index_string = '''
                 border-spacing: 0 !important;
             }
 
-            /* Table Header - Golf Green */
+            /* Table Header - Night Round */
             .dash-header {
-                background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%) !important;
-                color: white !important;
+                background: linear-gradient(135deg, var(--night-bg-0) 0%, var(--night-bg-3) 100%) !important;
+                color: var(--night-ink-soft) !important;
                 font-weight: 600 !important;
                 border: none !important;
                 text-align: center !important;
@@ -290,63 +309,66 @@ app.index_string = '''
             }
 
             .dash-header:hover {
-                background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%) !important;
+                background: linear-gradient(135deg, var(--night-bg-3) 0%, #1b3324 100%) !important;
             }
 
             /* Table Cells - Striped Rows */
             .dash-cell {
                 padding: 12px !important;
-                border: 1px solid #e0e0e0 !important;
+                border: 1px solid var(--night-line) !important;
+                color: var(--night-ink) !important;
                 font-size: 0.9rem !important;
                 transition: all 0.2s ease !important;
             }
 
             .dash-spreadsheet-container .dash-spreadsheet-inner tr:nth-child(even) .dash-cell {
-                background-color: #f1f8f4 !important;
+                background-color: var(--night-row-alt) !important;
             }
 
             .dash-spreadsheet-container .dash-spreadsheet-inner tr:nth-child(odd) .dash-cell {
-                background-color: white !important;
+                background-color: var(--night-bg-2) !important;
             }
 
             /* Hover Effect on Rows */
             .dash-spreadsheet-container .dash-spreadsheet-inner tr:hover .dash-cell {
-                background-color: #e8f5e9 !important;
+                background-color: rgba(74, 222, 128, 0.12) !important;
                 cursor: pointer;
             }
 
             /* Selected Row */
             .dash-cell.focused {
-                background-color: #c8e6c9 !important;
-                border: 2px solid #4caf50 !important;
+                background-color: #1b3324 !important;
+                border: 2px solid var(--night-accent) !important;
             }
 
             /* Active/Selected Cell */
             .dash-selected {
-                background-color: #c8e6c9 !important;
+                background-color: #1b3324 !important;
             }
 
             /* Filter Row */
             .dash-filter {
-                background-color: #f1f8f4 !important;
-                border-bottom: 2px solid #4caf50 !important;
+                background-color: var(--night-bg-3) !important;
+                border-bottom: 2px solid var(--night-accent) !important;
             }
 
             .dash-filter input {
-                border: 1px solid #81c784 !important;
+                background-color: var(--night-bg-0) !important;
+                color: var(--night-ink) !important;
+                border: 1px solid var(--night-line) !important;
                 border-radius: 4px !important;
                 padding: 6px !important;
             }
 
             .dash-filter input:focus {
-                border-color: #4caf50 !important;
+                border-color: var(--night-accent) !important;
                 outline: none !important;
-                box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2) !important;
+                box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.2) !important;
             }
 
             /* Sort Icons */
             .column-header--sort svg {
-                fill: white !important;
+                fill: var(--night-ink-soft) !important;
             }
 
             /* Pagination */
@@ -355,73 +377,87 @@ app.index_string = '''
             }
 
             .dash-spreadsheet-container button {
-                background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%) !important;
+                background: linear-gradient(135deg, var(--night-accent-strong) 0%, var(--night-accent) 100%) !important;
                 border: none !important;
                 border-radius: 20px !important;
-                color: white !important;
+                color: var(--night-accent-ink) !important;
                 padding: 8px 20px !important;
                 margin: 0 5px !important;
             }
 
             .dash-spreadsheet-container button:hover {
-                background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%) !important;
+                background: linear-gradient(135deg, var(--night-accent) 0%, #86efac 100%) !important;
             }
 
             /* Alert Styling */
             .alert-success {
-                background-color: #e8f5e9 !important;
-                border-color: #81c784 !important;
-                color: #1b5e20 !important;
+                background-color: #132a1c !important;
+                border-color: #2f6b46 !important;
+                color: var(--night-ink-soft) !important;
                 font-weight: 500 !important;
             }
 
             .alert-danger {
-                background-color: #ffebee !important;
-                border-color: #ef5350 !important;
-                color: #c62828 !important;  /* Dark red for readability */
+                background-color: #2a1414 !important;
+                border-color: #7f3535 !important;
+                color: #f3a3a3 !important;  /* Light red for readability on dark */
                 font-weight: 500 !important;
             }
 
             .alert-warning {
-                background-color: #fff3e0 !important;
-                border-color: #ffb74d !important;
-                color: #e65100 !important;  /* Dark orange for readability */
+                background-color: #2a2010 !important;
+                border-color: #8a6a2a !important;
+                color: var(--night-amber) !important;
                 font-weight: 500 !important;
             }
 
             .alert-info {
-                background-color: #e3f2fd !important;
-                border-color: #64b5f6 !important;
-                color: #0d47a1 !important;  /* Dark blue for readability */
+                background-color: #0f2333 !important;
+                border-color: #2a5a80 !important;
+                color: #8fc4ea !important;  /* Light blue for readability on dark */
                 font-weight: 500 !important;
             }
 
             /* Input Fields */
-            input[type="number"], input[type="text"], .Select-control {
-                border: 1px solid #c8e6c9 !important;
+            input[type="number"], input[type="text"], .form-control, .Select-control {
+                background-color: var(--night-bg-0) !important;
+                color: var(--night-ink) !important;
+                border: 1px solid var(--night-line) !important;
                 border-radius: 8px !important;
                 transition: all 0.3s ease !important;
             }
 
-            input:focus, .Select-control:focus {
-                border-color: #4caf50 !important;
-                box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1) !important;
+            input:focus, .form-control:focus, .Select-control:focus {
+                background-color: var(--night-bg-0) !important;
+                border-color: var(--night-accent) !important;
+                box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15) !important;
                 outline: none !important;
+            }
+
+            .form-control::placeholder {
+                color: var(--night-ink-soft) !important;
+                opacity: 0.7;
             }
 
             /* Dropdown Styling */
             .Select-menu-outer {
-                border: 1px solid #81c784 !important;
+                background-color: var(--night-bg-2) !important;
+                border: 1px solid var(--night-line) !important;
                 border-radius: 8px !important;
             }
 
+            .Select-option {
+                background-color: var(--night-bg-2) !important;
+                color: var(--night-ink) !important;
+            }
+
             .Select-option:hover {
-                background-color: #e8f5e9 !important;
+                background-color: #1b3324 !important;
             }
 
             .Select-option.is-selected {
-                background-color: #c8e6c9 !important;
-                color: #1b5e20 !important;
+                background-color: var(--night-line) !important;
+                color: var(--night-accent) !important;
             }
 
             /* Match Cards Styling */
@@ -431,7 +467,7 @@ app.index_string = '''
 
             .match-card:hover {
                 transform: translateY(-5px) !important;
-                box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.5) !important;
             }
         </style>
     </head>
@@ -482,7 +518,7 @@ app.layout = html.Div([
         dcc.Loading(
             id='page-loading',
             type='default',
-            color='#4caf50',
+            color='#4ade80',
             target_components={'page-content': 'children'},
             children=html.Div(id='page-content')
         )
@@ -1109,7 +1145,7 @@ def create_match_row(match):
     score = match.get('Score', '')
     has_score = bool(score) and score not in ['N/A', '']
 
-    row_bg = '#e3f2fd' if blue_won else '#ffebee' if red_won else '#f5f5f5' if halved else '#ffffff'
+    row_bg = '#0f2333' if blue_won else '#2a1414' if red_won else '#16281f' if halved else '#152a20'
     row_border = '#1976d2' if blue_won else '#d32f2f' if red_won else '#9e9e9e'
 
     def score_badge(color):
@@ -1150,6 +1186,7 @@ def create_match_row(match):
         'flexWrap': 'nowrap',
         'alignItems': 'center',
         'backgroundColor': row_bg,
+        'color': '#dce8de',
         'borderLeft': f'4px solid {row_border}',
         'marginBottom': '2px',
         'padding': '12px 8px',
@@ -1215,15 +1252,15 @@ def create_teams_page():
 def create_team_roster_card(team_name, players):
     """Helper function to build a team roster card with player handicaps, matching the Matches page color scheme"""
     if team_name == 'Blue':
-        card_bg_color = '#e3f2fd'  # Light blue background
-        border_color = '#1976d2'   # Darker blue border
+        card_bg_color = '#0f2333'  # Dark blue-tinted background
+        border_color = '#1976d2'   # Blue border
         header_bg_color = '#1976d2'  # Blue header
-        text_color = '#0d47a1'     # Dark blue text
+        text_color = '#8fc4ea'     # Light blue text
     else:  # Red
-        card_bg_color = '#ffebee'  # Light red background
-        border_color = '#d32f2f'   # Darker red border
+        card_bg_color = '#2a1414'  # Dark red-tinted background
+        border_color = '#d32f2f'   # Red border
         header_bg_color = '#d32f2f'  # Red header
-        text_color = '#c62828'     # Dark red text
+        text_color = '#f3a3a3'     # Light red text
 
     if players:
         rows = []
@@ -1242,8 +1279,8 @@ def create_team_roster_card(team_name, players):
 
     return dbc.Card([
         dbc.CardHeader([
-            html.H4(f"{team_name} Team ({len(players)})", className='mb-0', style={'color': 'dark-green', 'fontWeight': 'bold'})
-        ], style={'backgroundColor': header_bg_color, 'color': 'dark-green'}),
+            html.H4(f"{team_name} Team ({len(players)})", className='mb-0', style={'color': 'white', 'fontWeight': 'bold'})
+        ], style={'backgroundColor': header_bg_color, 'color': 'white'}),
         dbc.CardBody(body, style={'backgroundColor': card_bg_color})
     ],
     style={
@@ -1820,12 +1857,18 @@ def update_player_details(player):
     )
     fig.update_layout(
         title=f"{player}'s Points per Year",
-        xaxis_title="Year"
+        xaxis_title="Year",
+        template='plotly_dark',
+        paper_bgcolor='#152a20',
+        plot_bgcolor='#152a20',
+        font_color='#dce8de',
+        legend=dict(bgcolor='rgba(0,0,0,0)')
     )
-    fig.update_xaxes(tickmode='linear', dtick=1)
+    fig.update_xaxes(tickmode='linear', dtick=1, gridcolor='#254333')
     fig.update_yaxes(
         title_text="Points", secondary_y=False,
-        range=[0, max(yearly_points['Points']) + 1] if len(yearly_points) > 0 else None
+        range=[0, max(yearly_points['Points']) + 1] if len(yearly_points) > 0 else None,
+        gridcolor='#254333'
     )
     fig.update_yaxes(title_text="Handicap Index", secondary_y=True, showgrid=False)
 
@@ -2372,7 +2415,7 @@ def update_matches_display(year_filter):
 
         year_sections.append(
             html.Div([
-                html.H2(f"Year {year}", style={'marginBottom': '25px', 'color': '#1b5e20', 'fontSize': '2rem', 'textAlign': 'center'}),
+                html.H2(f"Year {year}", style={'marginBottom': '25px', 'color': '#4ade80', 'fontSize': '2rem', 'textAlign': 'center'}),
                 html.Div(day_sections)
             ], style={'marginBottom': '50px'})
         )
