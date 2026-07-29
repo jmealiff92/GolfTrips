@@ -64,6 +64,11 @@ class TestPairingSuggester(unittest.TestCase):
         })
         handicaps = {'Alice': 5.0, 'Bob': 12.0, 'Carol': 8.0}
         self.db_service.get_player_handicap.side_effect = lambda name, year: handicaps.get(name)
+        self.db_service.get_team_assignments_by_year.return_value = [
+            {'name': 'Alice', 'team': 'Blue'},
+            {'name': 'Bob', 'team': 'Blue'},
+            {'name': 'Carol', 'team': 'Red'},
+        ]
 
     def _suggester(self, api_key='test-key'):
         return PairingSuggester(self.data_service, self.db_service, api_key=api_key, model='claude-test')
@@ -289,6 +294,23 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertIn('75.0% win rate', seed_content)
         self.assertIn('What do you think?', seed_content)
         self.assertEqual(result['conversation'][1], {'role': 'assistant', 'content': result['reply']})
+
+    def test_chat_seed_covers_both_teams_full_roster_not_just_checked_players(self):
+        """Chat context should be built from the whole year's roster (both teams), not just the
+        subset of players currently checked in the pairing UI - Carol (Red team, unchecked) must
+        still show up so open-ended questions aren't scoped to one team."""
+        suggester = self._suggester()
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = FakeMessage("Here's the trip so far.")
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="How's the trip going?"
+            )
+        seed_content = result['conversation'][0]['content']
+        self.assertIn('Blue team (2): Alice, Bob', seed_content)
+        self.assertIn('Red team (1): Carol', seed_content)
+        self.assertIn('Carol', seed_content)
+        self.assertIn('checked as available in the pairing tool', seed_content)
 
     def test_chat_continues_an_existing_conversation_without_mutating_it(self):
         suggester = self._suggester()
