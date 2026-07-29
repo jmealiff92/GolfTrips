@@ -220,9 +220,11 @@ class PairingSuggester:
                                conversation: Optional[list[dict]], user_message: str) -> dict:
         """Continue an open-ended chat with Captain Claude; return {'reply': str, 'conversation': [...]}.
 
-        If `conversation` is empty (no suggestion has been generated yet), the stats/handicap
-        context is built locally at no API cost and bundled into this same request alongside the
-        user's message, rather than spent on a separate priming call.
+        If `conversation` is empty (no suggestion has been generated yet), context covering both
+        teams' full rosters for `year` is built locally at no API cost and bundled into this same
+        request alongside the user's message, rather than spent on a separate priming call. This is
+        deliberately broader than `available_players` (the checked subset for one team in the
+        pairing UI) since chat questions aren't scoped to whichever team happens to be selected.
         """
         if not self.api_key:
             logger.warning("continue_conversation called with no ANTHROPIC_API_KEY configured")
@@ -244,8 +246,8 @@ class PairingSuggester:
                 ),
             })
         else:
-            players = list(dict.fromkeys(available_players or []))
-            context = self._build_context_block(team, year, players)
+            selected_players = list(dict.fromkeys(available_players or []))
+            context = self._build_chat_context_block(year, selected_team=team, selected_players=selected_players)
             seed = f"""{context}
 The admin has not generated a formatted pairing list yet. Answer their question - about pairings, \
 individual/head-to-head/course stats, or anything else about the trip - conversationally in plain \
@@ -265,18 +267,54 @@ Admin: {user_message}"""
         return {"reply": reply, "conversation": conversation}
 
     def _build_context_block(self, team: str, year: int, players: list[str]) -> str:
-        player_stats_text = self._format_player_stats(players, year)
-        partner_history_text = self._format_partner_history(players)
-        match_history_text = self._format_match_history(players)
-
-        return f"""You are Captain Claude, helping a golf trip organizer with fourball (better-ball) \
+        header = f"""You are Captain Claude, helping a golf trip organizer with fourball (better-ball) \
 partnerships for {year} and with any other questions they have about the trip's matches, players, and \
 courses.
 
 Team: {team}
 Available players ({len(players)}): {', '.join(players)}
+"""
+        return header + self._build_context_body(players, year)
 
-Fourball background: in fourball match play, each pair's better score counts on each hole. Playing \
+    def _build_chat_context_block(self, year: int, selected_team: Optional[str] = None,
+                                   selected_players: Optional[list[str]] = None) -> str:
+        """Context for open-ended chat: covers every player on both teams for `year`, not just
+        whichever team/roster happens to be checked in the pairing UI right now, since chat
+        questions ('how did Blue do this year', 'who's Jeff's best partner') aren't scoped to one
+        team the way a pairing-suggestion request is."""
+        try:
+            assignments = self.db_service.get_team_assignments_by_year(year)
+        except Exception:
+            assignments = []
+        blue_players = sorted(dict.fromkeys(a['name'] for a in assignments if a['team'] == 'Blue'))
+        red_players = sorted(dict.fromkeys(a['name'] for a in assignments if a['team'] == 'Red'))
+        all_players = list(dict.fromkeys(blue_players + red_players))
+
+        selection_note = ""
+        if selected_team and selected_players:
+            selection_note = f"""
+The admin currently has these {selected_team} players checked as available in the pairing tool \
+above the chat: {', '.join(selected_players)}. That's just what's on-screen right now, not a \
+restriction on who you can discuss or include in pairing suggestions.
+"""
+
+        header = f"""You are Captain Claude, helping a golf trip organizer with fourball (better-ball) \
+partnerships for {year} and with any other questions they have about the trip's matches, players, and \
+courses.
+
+Blue team ({len(blue_players)}): {', '.join(blue_players) or 'none assigned'}
+Red team ({len(red_players)}): {', '.join(red_players) or 'none assigned'}
+{selection_note}"""
+        return header + self._build_context_body(all_players, year)
+
+    def _build_context_body(self, players: list[str], year: int) -> str:
+        """Shared data/instructions block (stats, partner synergy, match history, tool guidance) -
+        used by both the single-team pairing-suggestion prompt and the all-players chat context."""
+        player_stats_text = self._format_player_stats(players, year)
+        partner_history_text = self._format_partner_history(players)
+        match_history_text = self._format_match_history(players)
+
+        return f"""Fourball background: in fourball match play, each pair's better score counts on each hole. Playing \
 handicaps use an 85% allowance, with the lowest course handicap in the group playing to scratch and \
 everyone else receiving 85% of the difference - so pairing two very low-handicap players together does \
 not by itself create an unfair advantage within their own pair.
