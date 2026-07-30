@@ -7,10 +7,11 @@ in src/app.py is not touched.
 """
 import os
 
-from fasthtml.common import FastHTML, RedirectResponse, serve, Link, Script
+from fasthtml.common import FastHTML, RedirectResponse, JSONResponse, serve, Link, Script
 
 from auth import oauth, build_redirect_uri
 from layout import BOOTSTRAP_CSS, PLOTLY_JS
+from services import db_service
 from pages.player_details import player_details_page, render_player_panel
 from pages.add_match import add_match_page, render_team_handicap_panel, submit_add_match
 
@@ -31,6 +32,16 @@ app = FastHTML(
 @app.get('/')
 def index():
     return RedirectResponse('/player-details', status_code=303)
+
+
+@app.get('/health')
+def health_check():
+    """Port of src/app.py:134-149 — Render's health check hits this path."""
+    try:
+        db_service.get_years_list()
+        return JSONResponse({'status': 'healthy', 'database': 'connected'})
+    except Exception as e:
+        return JSONResponse({'status': 'unhealthy', 'error': str(e)}, status_code=503)
 
 
 # ============ Auth routes (port of src/app.py:91-121) ============
