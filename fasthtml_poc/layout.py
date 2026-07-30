@@ -37,8 +37,11 @@ def page(session: dict, title: str, *content):
 def data_table(df: pd.DataFrame):
     if df is None or df.empty:
         return P("No data.", cls='text-muted')
-    return Table(
+    table = Table(
         Thead(Tr(*[Th(str(c)) for c in df.columns])),
         Tbody(*[Tr(*[Td(str(v)) for v in row]) for row in df.itertuples(index=False)]),
         cls='table table-striped table-sm',
     )
+    # Wide tables (e.g. Match History's 11 columns) scroll horizontally on
+    # narrow screens instead of squeezing every column to fit.
+    return Div(table, cls='table-responsive')

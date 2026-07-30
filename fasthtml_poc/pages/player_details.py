@@ -28,7 +28,7 @@ def _build_points_chart(yearly_points: pd.DataFrame, player: str) -> go.Figure:
         ),
         secondary_y=True,
     )
-    fig.update_layout(title=f"{player}'s Points per Year", xaxis_title="Year")
+    fig.update_layout(title=f"{player}'s Points per Year", xaxis_title="Year", height=450)
     fig.update_xaxes(tickmode='linear', dtick=1)
     fig.update_yaxes(
         title_text="Points", secondary_y=False,
@@ -41,17 +41,6 @@ def _build_points_chart(yearly_points: pd.DataFrame, player: str) -> go.Figure:
 def render_player_panel(player: str):
     if not player:
         return Div(P("No player selected."), id='player-panel')
-
-    results = data_service.build_results_per_player()
-    player_results = results[results['Player'] == player]
-
-    decided_results = player_results[player_results['Result'] != 'Pending']
-    stats = decided_results['Result'].value_counts().to_dict()
-    wins = stats.get('Win', 0)
-    halves = stats.get('Half', 0)
-    losses = stats.get('Loss', 0)
-    points = wins + (halves * 0.5)
-    win_pct = ((wins + (halves / 2)) / len(decided_results) * 100) if len(decided_results) > 0 else 0
 
     df = data_service.df
     player_matches = df[
@@ -67,6 +56,14 @@ def render_player_panel(player: str):
         else ('Win' if row['Result'] == row['Player_Team']
         else ('Loss' if row['Result'] != 'Half' else 'Half')), axis=1
     )
+
+    decided_matches = player_matches[player_matches['Outcome'] != 'Pending']
+    stats = decided_matches['Outcome'].value_counts().to_dict()
+    wins = stats.get('Win', 0)
+    halves = stats.get('Half', 0)
+    losses = stats.get('Loss', 0)
+    points = wins + (halves * 0.5)
+    win_pct = ((wins + (halves / 2)) / len(decided_matches) * 100) if len(decided_matches) > 0 else 0
 
     def get_partner(row):
         if row['Player_Team'] == 'Blue':
@@ -171,8 +168,8 @@ def player_dropdown(selected):
         *[Option(p, value=p, selected=(p == selected)) for p in players],
         id='player-dropdown', name='player',
         hx_get='/player-details/panel', hx_trigger='change',
-        hx_target='#player-panel', hx_swap='outerHTML',
-        cls='form-select mb-4', style='width: 50%',
+        hx_target='#player-panel', hx_swap='outerHTML', hx_indicator='#player-loading',
+        cls='form-select mb-2', style='width: 50%',
     )
 
 
@@ -183,5 +180,7 @@ def player_details_page(session: dict):
         session, "Player Details",
         H2("Player Details"),
         player_dropdown(first),
+        # Outside #player-panel since outerHTML swap replaces that whole element.
+        Div("Loading…", id='player-loading', cls='htmx-indicator text-muted small mb-4'),
         render_player_panel(first),
     )
