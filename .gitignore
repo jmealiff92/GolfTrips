@@ -25,3 +25,6 @@ logs/
 
 # Background callback disk cache (dash DiskcacheManager)
 cache/
+
+# FastHTML auto-generated session key fallback (used only if SECRET_KEY is unset)
+.sesskey
