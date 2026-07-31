@@ -153,6 +153,75 @@ class PairingSuggester:
                 "required": ["player"],
             },
         },
+        {
+            "name": "get_year_summary",
+            "description": (
+                "Overall Blue/Red point totals and the winner for one trip year, or every year if "
+                "none is given. Points already account for halves (0.5 each) and are pre-computed - "
+                "use this instead of manually tallying get_matches results to answer 'who won year "
+                "X', 'how many years has each team won', or 'was year X close'."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"year": {"type": "integer", "description": "Omit to get every year's summary."}},
+            },
+        },
+        {
+            "name": "get_team_points_by_day",
+            "description": (
+                "Cumulative Blue/Red points at the end of each day of a trip year, in order, for one "
+                "year or every year if none is given. Use this for momentum/comeback questions - e.g. "
+                "which team led after day 1, whether a team came from behind to win overall, or which "
+                "day had the biggest swing. Don't reconstruct day-by-day standings by hand from "
+                "get_matches; this tool already has the running totals."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"year": {"type": "integer", "description": "Omit to get every year's day-by-day breakdown."}},
+            },
+        },
+        {
+            "name": "get_team_roster",
+            "description": "Which players were on the Blue and Red teams for a given year, with each player's handicap index for that year.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"year": {"type": "integer"}},
+                "required": ["year"],
+            },
+        },
+        {
+            "name": "get_course_details",
+            "description": (
+                "Par, slope rating, and course rating for one course, or every course if none is "
+                "given. For win/loss records at a course use get_course_stats instead."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"course": {"type": "string", "description": "Omit to get every course."}},
+            },
+        },
+        {
+            "name": "get_player_handicap_history",
+            "description": (
+                "A player's handicap index in every year it was recorded, or every player's handicap "
+                "history if no player is given. Use this for questions about handicap trends over "
+                "time - get_player_stats only returns the handicap for one specified year."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"player": {"type": "string", "description": "Omit to get every player's handicap history."}},
+            },
+        },
+        {
+            "name": "get_trip_years",
+            "description": "List of every year this trip has recorded matches for, most recent first.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_all_players",
+            "description": "Full roster of every player registered in the system (Manage Players page), not limited to those with recorded matches.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
     ]
 
     def __init__(self, data_service, db_service, api_key: Optional[str] = None, model: Optional[str] = None):
@@ -340,8 +409,17 @@ to pairing decisions, which are always Fourball-only.
 
 You also have tools to look up match-by-match results (including each match's score/margin, to judge \
 how tight or lopsided it was), a player's full stats or handicap for a given year, head-to-head records \
-between two players, partner history, and course-by-course performance. Use them whenever a question \
-needs more detail than the summary above.
+between two players, partner history, course-by-course performance, per-year team point totals and \
+winners, day-by-day team point progression, team rosters by year, course details (par/slope/rating), \
+a player's handicap history across all years, the list of trip years, and the full player roster. Use \
+them whenever a question needs more detail than the summary above.
+
+PREFER PRE-AGGREGATED TOOLS OVER MANUAL ARITHMETIC - for anything about team standings, who won a \
+year, or how the score moved over the course of a trip (including "did a team come from behind" \
+questions), call get_year_summary and/or get_team_points_by_day rather than adding up individual \
+results from get_matches yourself. Those totals are pre-computed and already handle halves correctly \
+(0.5 points) - recomputing them by hand from a list of match rows is exactly the kind of arithmetic \
+that's easy to get wrong, so don't do it when a tool already has the answer.
 
 PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
 ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \
@@ -454,6 +532,13 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_partner_history": self._tool_get_partner_history,
             "get_course_stats": self._tool_get_course_stats,
             "get_player_course_performance": self._tool_get_player_course_performance,
+            "get_year_summary": self._tool_get_year_summary,
+            "get_team_points_by_day": self._tool_get_team_points_by_day,
+            "get_team_roster": self._tool_get_team_roster,
+            "get_course_details": self._tool_get_course_details,
+            "get_player_handicap_history": self._tool_get_player_handicap_history,
+            "get_trip_years": self._tool_get_trip_years,
+            "get_all_players": self._tool_get_all_players,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -529,6 +614,38 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             df = df.copy()
             df['Pending'] = df['Matches'] - (df['Wins'] + df['Halves'] + df['Losses'])
         return json.dumps({"player": player, "courses": _df_records(df)}, default=_json_default)
+
+    def _tool_get_year_summary(self, year: Optional[int] = None) -> str:
+        df = self.data_service.summarise_team_results()
+        if df is not None and not df.empty and year is not None:
+            df = df[df['Year'] == int(year)]
+        return json.dumps({"years": _df_records(df)}, default=_json_default)
+
+    def _tool_get_team_points_by_day(self, year: Optional[int] = None) -> str:
+        by_year = self.data_service.get_team_points_by_day()
+        if year is not None:
+            by_year = {k: v for k, v in by_year.items() if k == int(year)}
+        return json.dumps({"team_points_by_day": by_year}, default=_json_default)
+
+    def _tool_get_team_roster(self, year: int) -> str:
+        roster = self.db_service.get_team_assignments_by_year(int(year))
+        return json.dumps({"year": year, "roster": roster}, default=_json_default)
+
+    def _tool_get_course_details(self, course: Optional[str] = None) -> str:
+        if course:
+            return json.dumps({"course": self.db_service.get_course(course)}, default=_json_default)
+        return json.dumps({"courses": self.db_service.get_all_courses()}, default=_json_default)
+
+    def _tool_get_player_handicap_history(self, player: Optional[str] = None) -> str:
+        if player:
+            return json.dumps({"player": self.db_service.get_player_with_handicaps(player)}, default=_json_default)
+        return json.dumps({"players": self.db_service.get_all_players_with_handicaps()}, default=_json_default)
+
+    def _tool_get_trip_years(self) -> str:
+        return json.dumps({"years": self.db_service.get_years_list()}, default=_json_default)
+
+    def _tool_get_all_players(self) -> str:
+        return json.dumps({"players": self.db_service.get_all_players()}, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
