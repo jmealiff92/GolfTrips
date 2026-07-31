@@ -170,10 +170,15 @@ class PairingSuggester:
             "name": "get_team_points_by_day",
             "description": (
                 "Cumulative Blue/Red points at the end of each day of a trip year, in order, for one "
-                "year or every year if none is given. Use this for momentum/comeback questions - e.g. "
-                "which team led after day 1, whether a team came from behind to win overall, or which "
-                "day had the biggest swing. Don't reconstruct day-by-day standings by hand from "
-                "get_matches; this tool already has the running totals."
+                "year or every year if none is given. Each day already includes a `leader` field "
+                "('Blue'/'Red'/'Tie') so you don't have to compare the point totals yourself. The "
+                "last day's leader is the year's overall winner. Use this for any momentum/lead "
+                "question - who led after day N, whether a team came from behind to win overall "
+                "(compare the leader on an earlier day to the leader on the last day), which day had "
+                "the biggest swing, whether the lead changed hands, etc. - by comparing the `leader` "
+                "values directly rather than the raw point numbers. Don't reconstruct day-by-day "
+                "standings by hand from get_matches; this tool already has the running totals and the "
+                "leader resolved."
             ),
             "input_schema": {
                 "type": "object",
@@ -220,18 +225,6 @@ class PairingSuggester:
         {
             "name": "get_all_players",
             "description": "Full roster of every player registered in the system (Manage Players page), not limited to those with recorded matches.",
-            "input_schema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "get_comeback_summary",
-            "description": (
-                "For every trip year, whether the team that trailed after day 1 went on to win the "
-                "trip overall - i.e. a 'comeback'. This directly answers questions like 'has either "
-                "team come from behind after day 1 to win overall' or 'which years were comebacks' - "
-                "the day-1-leader-vs-final-winner comparison is already done for you per year "
-                "(`Came_From_Behind`), so use this instead of comparing get_year_summary and "
-                "get_team_points_by_day yourself across years, which is easy to get wrong."
-            ),
             "input_schema": {"type": "object", "properties": {}},
         },
     ]
@@ -433,11 +426,13 @@ totals are pre-computed and already handle halves correctly (0.5 points) - recom
 from a list of match rows is exactly the kind of arithmetic that's easy to get wrong, so don't do it \
 when a tool already has the answer.
 
-COMEBACK / "CAME FROM BEHIND" QUESTIONS - for "has a team come from behind after day 1 to win \
-overall", "which years were comebacks", or anything comparing the day-1 leader to the eventual \
-winner, call get_comeback_summary. Its `Came_From_Behind` field is already computed per year - do \
-NOT try to work this out yourself by eyeballing get_year_summary and get_team_points_by_day side by \
-side across years, since comparing two leaders across many rows by hand is exactly where mistakes \
+LEAD / MOMENTUM / "CAME FROM BEHIND" QUESTIONS - for anything comparing who was ahead at one point in \
+a trip to who ended up winning it (e.g. "did a team come from behind after day 1", "who led after day \
+2", "did the lead change hands", "which years were comebacks"), call get_team_points_by_day and read \
+its `leader` field for the days you need - do NOT compare the raw Blue/Red point numbers yourself. A \
+"comeback" year is one where the leader on the day in question differs from the leader on the last \
+day of that year (the last day's leader is the overall winner). Comparing precomputed `leader` labels \
+across years is far less error-prone than comparing point totals by hand, which is where mistakes \
 happen.
 
 PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
@@ -558,7 +553,6 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_player_handicap_history": self._tool_get_player_handicap_history,
             "get_trip_years": self._tool_get_trip_years,
             "get_all_players": self._tool_get_all_players,
-            "get_comeback_summary": self._tool_get_comeback_summary,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -666,10 +660,6 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_all_players(self) -> str:
         return json.dumps({"players": self.db_service.get_all_players()}, default=_json_default)
-
-    def _tool_get_comeback_summary(self) -> str:
-        df = self.data_service.get_day1_comeback_summary()
-        return json.dumps({"years": _df_records(df)}, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:

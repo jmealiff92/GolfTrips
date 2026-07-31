@@ -55,7 +55,9 @@ class DataService:
         return team_summary
 
     def get_team_points_by_day(self) -> dict:
-        """Calculate cumulative Blue/Red points per day for each year, for sparklines"""
+        """Calculate cumulative Blue/Red points per day for each year, with the leader at each day
+        already resolved (avoids callers - human or LLM - comparing two point totals themselves and
+        getting the leader backwards)."""
         df = self.df
         if df.empty:
             return {}
@@ -66,55 +68,19 @@ class DataService:
             daily['Blue_Points'] = daily.get('Blue', 0) + daily.get('Half', 0) * 0.5
             daily['Red_Points'] = daily.get('Red', 0) + daily.get('Half', 0) * 0.5
             daily = daily.sort_index()
+            blue_cum = daily['Blue_Points'].cumsum().tolist()
+            red_cum = daily['Red_Points'].cumsum().tolist()
+            leaders = [
+                'Blue' if b > r else 'Red' if r > b else 'Tie'
+                for b, r in zip(blue_cum, red_cum)
+            ]
             by_year[int(year)] = {
                 'days': [int(d) for d in daily.index],
-                'blue': daily['Blue_Points'].cumsum().tolist(),
-                'red': daily['Red_Points'].cumsum().tolist(),
+                'blue': blue_cum,
+                'red': red_cum,
+                'leader': leaders,
             }
         return by_year
-
-    def get_day1_comeback_summary(self) -> pd.DataFrame:
-        """For each year, compare the leader after day 1 to the eventual overall winner and flag
-        whether a team came from behind. Does the Blue-vs-Red comparison in code rather than leaving
-        it to be worked out from the day-by-day/overall totals, since that comparison across many
-        years is exactly the kind of thing that's easy to get wrong when done by hand."""
-        overall = self.summarise_team_results()
-        if overall.empty:
-            return pd.DataFrame()
-
-        by_day = self.get_team_points_by_day()
-        rows = []
-        for _, row in overall.iterrows():
-            year = int(row['Year'])
-            day_data = by_day.get(year)
-            if not day_data or not day_data['days']:
-                continue
-
-            day1_blue = day_data['blue'][0]
-            day1_red = day_data['red'][0]
-            if day1_blue > day1_red:
-                day1_leader = 'Blue'
-            elif day1_red > day1_blue:
-                day1_leader = 'Red'
-            else:
-                day1_leader = 'Tie'
-
-            final_winner = row['Winner']
-            came_from_behind = day1_leader in ('Blue', 'Red') and final_winner in ('Blue', 'Red') \
-                and day1_leader != final_winner
-
-            rows.append({
-                'Year': year,
-                'Day1_Leader': day1_leader,
-                'Day1_Blue_Points': day1_blue,
-                'Day1_Red_Points': day1_red,
-                'Final_Winner': final_winner,
-                'Final_Blue_Points': row['Blue_Points'],
-                'Final_Red_Points': row['Red_Points'],
-                'Came_From_Behind': bool(came_from_behind),
-            })
-
-        return pd.DataFrame(rows)
 
     def get_player_team(self, player_name: str, year: int) -> Optional[str]:
         """Get the team of a player for a specific year"""
