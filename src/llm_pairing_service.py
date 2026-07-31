@@ -222,6 +222,18 @@ class PairingSuggester:
             "description": "Full roster of every player registered in the system (Manage Players page), not limited to those with recorded matches.",
             "input_schema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "get_comeback_summary",
+            "description": (
+                "For every trip year, whether the team that trailed after day 1 went on to win the "
+                "trip overall - i.e. a 'comeback'. This directly answers questions like 'has either "
+                "team come from behind after day 1 to win overall' or 'which years were comebacks' - "
+                "the day-1-leader-vs-final-winner comparison is already done for you per year "
+                "(`Came_From_Behind`), so use this instead of comparing get_year_summary and "
+                "get_team_points_by_day yourself across years, which is easy to get wrong."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
+        },
     ]
 
     def __init__(self, data_service, db_service, api_key: Optional[str] = None, model: Optional[str] = None):
@@ -415,11 +427,18 @@ a player's handicap history across all years, the list of trip years, and the fu
 them whenever a question needs more detail than the summary above.
 
 PREFER PRE-AGGREGATED TOOLS OVER MANUAL ARITHMETIC - for anything about team standings, who won a \
-year, or how the score moved over the course of a trip (including "did a team come from behind" \
-questions), call get_year_summary and/or get_team_points_by_day rather than adding up individual \
-results from get_matches yourself. Those totals are pre-computed and already handle halves correctly \
-(0.5 points) - recomputing them by hand from a list of match rows is exactly the kind of arithmetic \
-that's easy to get wrong, so don't do it when a tool already has the answer.
+year, or how the score moved over the course of a trip, call get_year_summary and/or \
+get_team_points_by_day rather than adding up individual results from get_matches yourself. Those \
+totals are pre-computed and already handle halves correctly (0.5 points) - recomputing them by hand \
+from a list of match rows is exactly the kind of arithmetic that's easy to get wrong, so don't do it \
+when a tool already has the answer.
+
+COMEBACK / "CAME FROM BEHIND" QUESTIONS - for "has a team come from behind after day 1 to win \
+overall", "which years were comebacks", or anything comparing the day-1 leader to the eventual \
+winner, call get_comeback_summary. Its `Came_From_Behind` field is already computed per year - do \
+NOT try to work this out yourself by eyeballing get_year_summary and get_team_points_by_day side by \
+side across years, since comparing two leaders across many rows by hand is exactly where mistakes \
+happen.
 
 PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
 ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \
@@ -539,6 +558,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_player_handicap_history": self._tool_get_player_handicap_history,
             "get_trip_years": self._tool_get_trip_years,
             "get_all_players": self._tool_get_all_players,
+            "get_comeback_summary": self._tool_get_comeback_summary,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -646,6 +666,10 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_all_players(self) -> str:
         return json.dumps({"players": self.db_service.get_all_players()}, default=_json_default)
+
+    def _tool_get_comeback_summary(self) -> str:
+        df = self.data_service.get_day1_comeback_summary()
+        return json.dumps({"years": _df_records(df)}, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
