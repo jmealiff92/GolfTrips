@@ -94,7 +94,10 @@ def render_player_panel(player: str):
     )
 
     fig = _build_points_chart(yearly_points, player)
-    chart_html = fig.to_html(full_html=False, include_plotlyjs=False, div_id='player-points-chart')
+    chart_html = fig.to_html(
+        full_html=False, include_plotlyjs=False, div_id='player-points-chart',
+        config={'responsive': False},
+    )
 
     course_perf = data_service.get_player_course_performance(player)
     partner_stats_df = data_service.get_partner_performace(player)
