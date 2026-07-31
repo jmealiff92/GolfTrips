@@ -54,6 +54,25 @@ class DataService:
         team_summary = team_summary.reset_index()[['Year', 'Blue_Points', 'Red_Points', 'Winner']]
         return team_summary
 
+    def get_team_points_by_day(self) -> dict:
+        """Calculate cumulative Blue/Red points per day for each year, for sparklines"""
+        df = self.df
+        if df.empty:
+            return {}
+
+        by_year = {}
+        for year, year_df in df.groupby('Year'):
+            daily = year_df.groupby(['Day', 'Result']).size().unstack(fill_value=0)
+            daily['Blue_Points'] = daily.get('Blue', 0) + daily.get('Half', 0) * 0.5
+            daily['Red_Points'] = daily.get('Red', 0) + daily.get('Half', 0) * 0.5
+            daily = daily.sort_index()
+            by_year[int(year)] = {
+                'days': [int(d) for d in daily.index],
+                'blue': daily['Blue_Points'].cumsum().tolist(),
+                'red': daily['Red_Points'].cumsum().tolist(),
+            }
+        return by_year
+
     def get_player_team(self, player_name: str, year: int) -> Optional[str]:
         """Get the team of a player for a specific year"""
         df = self.df

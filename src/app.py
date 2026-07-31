@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 from dash_chat import ChatComponent
+import base64
 import os
 import sys
 import time
@@ -490,36 +491,90 @@ app.layout = html.Div([
 ])
 
 
+TEAM_BLUE_COLOR = '#0066cc'
+TEAM_RED_COLOR = '#cc0000'
+
+
+def _build_team_trend_sparkline(days, blue_points, red_points):
+    """Build a small inline SVG sparkline (as an html.Img) showing cumulative
+    Blue/Red points by day, e.g. for the Overall Team Summary trend column."""
+    if not days:
+        return html.Span('—', style={'color': '#888'})
+
+    width, height, pad = 140, 36, 5
+    n = len(days)
+    max_val = max(max(blue_points), max(red_points), 1)
+
+    def x_at(i):
+        return width / 2 if n == 1 else pad + (width - 2 * pad) * (i / (n - 1))
+
+    def y_at(v):
+        return height - pad - (v / max_val) * (height - 2 * pad)
+
+    blue_xy = [(x_at(i), y_at(v)) for i, v in enumerate(blue_points)]
+    red_xy = [(x_at(i), y_at(v)) for i, v in enumerate(red_points)]
+    blue_pts = ' '.join(f'{x:.1f},{y:.1f}' for x, y in blue_xy)
+    red_pts = ' '.join(f'{x:.1f},{y:.1f}' for x, y in red_xy)
+    blue_end, red_end = blue_xy[-1], red_xy[-1]
+
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">'
+        f'<polyline points="{blue_pts}" fill="none" stroke="{TEAM_BLUE_COLOR}" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />'
+        f'<polyline points="{red_pts}" fill="none" stroke="{TEAM_RED_COLOR}" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />'
+        f'<circle cx="{blue_end[0]:.1f}" cy="{blue_end[1]:.1f}" r="3" fill="{TEAM_BLUE_COLOR}" />'
+        f'<circle cx="{red_end[0]:.1f}" cy="{red_end[1]:.1f}" r="3" fill="{TEAM_RED_COLOR}" />'
+        f'</svg>'
+    )
+    data_uri = 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+    tooltip = (
+        f"Day {days[-1]}: Blue {blue_points[-1]:g} - Red {red_points[-1]:g} "
+        f"(cumulative points by day)"
+    )
+    return html.Img(src=data_uri, alt=tooltip, title=tooltip, style={'height': '36px'})
+
+
 # ============ Page 1: Summary and Player Performance ============
 def create_team_summary_page():
     partner_performance = data_service.get_partner_performace(min_matches=3)
+    team_summary_rows = data_service.summarise_team_results().to_dict('records')
+    team_points_by_day = data_service.get_team_points_by_day()
+
+    winner_colors = {'Blue': '#cce5ff', 'Red': '#ffcccc'}
+    team_summary_table_rows = []
+    for row in team_summary_rows:
+        day_data = team_points_by_day.get(row['Year'], {})
+        team_summary_table_rows.append(html.Tr([
+            html.Td(row['Year']),
+            html.Td(row['Blue_Points']),
+            html.Td(row['Red_Points']),
+            html.Td(row['Winner'], style={
+                'backgroundColor': winner_colors.get(row['Winner']),
+                'fontWeight': 'bold'
+            }),
+            html.Td(_build_team_trend_sparkline(
+                day_data.get('days', []), day_data.get('blue', []), day_data.get('red', [])
+            ))
+        ]))
+
     return html.Div([
         html.H2("Overall Team Summary"),
-        dash_table.DataTable(
-            id='team-summary-table',
-            columns=[
-                {'name': 'Year', 'id': 'Year'},
-                {'name': 'Blue Points', 'id': 'Blue_Points'},
-                {'name': 'Red Points', 'id': 'Red_Points'},
-                {'name': 'Winner', 'id': 'Winner'}
-            ],
-            data=data_service.summarise_team_results().to_dict('records'),
-            style_table={'overflowX': 'auto'},
-            style_cell={'textAlign': 'left', 'padding': '10px'},
-            style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
-            style_data_conditional=[
-                {
-                    'if': {'filter_query': '{Winner} = "Blue"', 'column_id': 'Winner'},
-                    'backgroundColor': '#cce5ff',
-                    'fontWeight': 'bold'
-                },
-                {
-                    'if': {'filter_query': '{Winner} = "Red"', 'column_id': 'Winner'},
-                    'backgroundColor': '#ffcccc',
-                    'fontWeight': 'bold'
-                }
-            ]
-        ),
+        html.Div([
+            html.Span("Trend: ", style={'fontWeight': 'bold', 'marginRight': '8px'}),
+            html.Span("● Blue Team", style={'color': TEAM_BLUE_COLOR, 'marginRight': '12px'}),
+            html.Span("● Red Team", style={'color': TEAM_RED_COLOR}),
+            html.Span(" — cumulative points by day", style={'color': '#666'})
+        ], style={'marginBottom': '10px', 'fontSize': '0.9em'}),
+        dbc.Table([
+            html.Thead(html.Tr([
+                html.Th('Year'), html.Th('Blue Points'), html.Th('Red Points'),
+                html.Th('Winner'), html.Th('Trend (by day)')
+            ])),
+            html.Tbody(team_summary_table_rows)
+        ], id='team-summary-table', bordered=False, hover=True, responsive=True,
+            style={'width': 'auto'}),
 
         html.H2("Overall Player Performance", style={'marginTop': '30px'}),
         dash_table.DataTable(
