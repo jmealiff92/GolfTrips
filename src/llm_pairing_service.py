@@ -170,10 +170,15 @@ class PairingSuggester:
             "name": "get_team_points_by_day",
             "description": (
                 "Cumulative Blue/Red points at the end of each day of a trip year, in order, for one "
-                "year or every year if none is given. Use this for momentum/comeback questions - e.g. "
-                "which team led after day 1, whether a team came from behind to win overall, or which "
-                "day had the biggest swing. Don't reconstruct day-by-day standings by hand from "
-                "get_matches; this tool already has the running totals."
+                "year or every year if none is given. Each day already includes a `leader` field "
+                "('Blue'/'Red'/'Tie') so you don't have to compare the point totals yourself. The "
+                "last day's leader is the year's overall winner. Use this for any momentum/lead "
+                "question - who led after day N, whether a team came from behind to win overall "
+                "(compare the leader on an earlier day to the leader on the last day), which day had "
+                "the biggest swing, whether the lead changed hands, etc. - by comparing the `leader` "
+                "values directly rather than the raw point numbers. Don't reconstruct day-by-day "
+                "standings by hand from get_matches; this tool already has the running totals and the "
+                "leader resolved."
             ),
             "input_schema": {
                 "type": "object",
@@ -415,11 +420,20 @@ a player's handicap history across all years, the list of trip years, and the fu
 them whenever a question needs more detail than the summary above.
 
 PREFER PRE-AGGREGATED TOOLS OVER MANUAL ARITHMETIC - for anything about team standings, who won a \
-year, or how the score moved over the course of a trip (including "did a team come from behind" \
-questions), call get_year_summary and/or get_team_points_by_day rather than adding up individual \
-results from get_matches yourself. Those totals are pre-computed and already handle halves correctly \
-(0.5 points) - recomputing them by hand from a list of match rows is exactly the kind of arithmetic \
-that's easy to get wrong, so don't do it when a tool already has the answer.
+year, or how the score moved over the course of a trip, call get_year_summary and/or \
+get_team_points_by_day rather than adding up individual results from get_matches yourself. Those \
+totals are pre-computed and already handle halves correctly (0.5 points) - recomputing them by hand \
+from a list of match rows is exactly the kind of arithmetic that's easy to get wrong, so don't do it \
+when a tool already has the answer.
+
+LEAD / MOMENTUM / "CAME FROM BEHIND" QUESTIONS - for anything comparing who was ahead at one point in \
+a trip to who ended up winning it (e.g. "did a team come from behind after day 1", "who led after day \
+2", "did the lead change hands", "which years were comebacks"), call get_team_points_by_day and read \
+its `leader` field for the days you need - do NOT compare the raw Blue/Red point numbers yourself. A \
+"comeback" year is one where the leader on the day in question differs from the leader on the last \
+day of that year (the last day's leader is the overall winner). Comparing precomputed `leader` labels \
+across years is far less error-prone than comparing point totals by hand, which is where mistakes \
+happen.
 
 PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
 ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \

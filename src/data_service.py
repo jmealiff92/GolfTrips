@@ -55,7 +55,9 @@ class DataService:
         return team_summary
 
     def get_team_points_by_day(self) -> dict:
-        """Calculate cumulative Blue/Red points per day for each year, for sparklines"""
+        """Calculate cumulative Blue/Red points per day for each year, with the leader at each day
+        already resolved (avoids callers - human or LLM - comparing two point totals themselves and
+        getting the leader backwards)."""
         df = self.df
         if df.empty:
             return {}
@@ -66,10 +68,17 @@ class DataService:
             daily['Blue_Points'] = daily.get('Blue', 0) + daily.get('Half', 0) * 0.5
             daily['Red_Points'] = daily.get('Red', 0) + daily.get('Half', 0) * 0.5
             daily = daily.sort_index()
+            blue_cum = daily['Blue_Points'].cumsum().tolist()
+            red_cum = daily['Red_Points'].cumsum().tolist()
+            leaders = [
+                'Blue' if b > r else 'Red' if r > b else 'Tie'
+                for b, r in zip(blue_cum, red_cum)
+            ]
             by_year[int(year)] = {
                 'days': [int(d) for d in daily.index],
-                'blue': daily['Blue_Points'].cumsum().tolist(),
-                'red': daily['Red_Points'].cumsum().tolist(),
+                'blue': blue_cum,
+                'red': red_cum,
+                'leader': leaders,
             }
         return by_year
 
