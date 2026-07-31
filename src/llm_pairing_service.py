@@ -69,7 +69,12 @@ class PairingSuggester:
                 "Look up individual match results, including each match's score/margin "
                 "(e.g. '3&2', '1 up', 'AS') so you can judge how tight or lopsided it was, and "
                 "exactly who played whom. Only returns matches with a decided result - pending/"
-                "unfinalized matches are omitted. Filter by any combination of year, match type, or player."
+                "unfinalized matches are omitted. Filter by any combination of year, match type, "
+                "player, and opponent. For a match-type-specific head-to-head (e.g. 'Jeff vs Conor in "
+                "Singles'), pass both player and opponent together with match_type - get_head_to_head "
+                "cannot filter by match_type, only get_matches can. In Singles, player+opponent always "
+                "means they played each other; in Fourball it can also mean they were partners, so "
+                "check the BluePlayer/RedPlayer columns in the result to tell which."
             ),
             "input_schema": {
                 "type": "object",
@@ -80,6 +85,14 @@ class PairingSuggester:
                         "description": "Omit to include both Singles and Fourball matches.",
                     },
                     "player": {"type": "string", "description": "Only matches this player appeared in"},
+                    "opponent": {
+                        "type": "string",
+                        "description": (
+                            "Only matches this player AND `player` both appeared in (either as "
+                            "opponents or, in Fourball, as partners - see the description above). "
+                            "Requires `player` to also be set."
+                        ),
+                    },
                 },
             },
         },
@@ -108,7 +121,13 @@ class PairingSuggester:
         },
         {
             "name": "get_head_to_head",
-            "description": "Head-to-head record between two specific players across every match they've played against each other.",
+            "description": (
+                "Head-to-head win/loss/half record between two specific players across every match "
+                "they've played against each other, combined across Singles and Fourball - there is "
+                "no match_type filter here. For a Singles-only or Fourball-only head-to-head, or to "
+                "see the individual match scores/margins, use get_matches with player and opponent "
+                "set to the two names (plus match_type if scoping to one type) instead."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -447,6 +466,20 @@ playing, etc.) without specifying a match type, treat that as spanning ALL match
 get_player_stats or get_matches with no match_type argument to get their combined Singles + Fourball \
 picture, don't just reuse the Fourball-only summary above. Only scope an answer to one match type when \
 the admin's question is specifically about pairings, Fourball, or Singles.
+
+WHEN TO ASK RATHER THAN GUESS - most questions have an obvious default (see SCOPE above) and should \
+just be answered. Ask a short clarifying question instead of answering, only when guessing could give \
+a confidently wrong answer:
+- A name doesn't match any known player, or could match more than one (e.g. two players with similar \
+names) - ask which player they meant rather than picking one or assuming it's nobody.
+- A tool call comes back empty in a way that's ambiguous between "no such matches happened" and "the \
+name/filter was wrong" - say what you tried and ask them to confirm the name/year rather than stating \
+"they've never played each other" as fact.
+- The question depends on a year and there's more than one year on record where the answer would \
+differ, with no year given or inferable from context - ask which year (or confirm "across all years") \
+instead of picking one silently.
+Never ask about things covered by a default above (match type, which team, etc.) - only ask when \
+answering without asking would risk stating something false.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -568,7 +601,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             return json.dumps({"error": str(e)})
 
     def _tool_get_matches(self, year: Optional[int] = None, match_type: Optional[str] = None,
-                           player: Optional[str] = None) -> str:
+                           player: Optional[str] = None, opponent: Optional[str] = None) -> str:
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({"matches": []})
@@ -581,6 +614,11 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             df = df[
                 (df['BluePlayer1'] == player) | (df['BluePlayer2'] == player) |
                 (df['RedPlayer1'] == player) | (df['RedPlayer2'] == player)
+            ]
+        if opponent:
+            df = df[
+                (df['BluePlayer1'] == opponent) | (df['BluePlayer2'] == opponent) |
+                (df['RedPlayer1'] == opponent) | (df['RedPlayer2'] == opponent)
             ]
         df = df[df['Result'].notna() & (df['Result'] != '')]
 
