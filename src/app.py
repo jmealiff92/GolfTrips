@@ -575,7 +575,7 @@ def create_team_summary_page():
             html.Span("● Red Team", style={'color': TEAM_RED_COLOR}),
             html.Span(" — cumulative points by day", style={'color': '#666'})
         ], style={'marginBottom': '10px', 'fontSize': '0.9em'}),
-        html.Div(className='dash-table-container', children=[
+        html.Div(className='dash-table-container', style={'overflowX': 'auto'}, children=[
             html.Div(className='dash-spreadsheet-container', children=[
                 html.Div(className='dash-spreadsheet dash-spreadsheet-inner', children=[
                     html.Table([
