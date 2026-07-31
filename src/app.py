@@ -368,6 +368,17 @@ app.index_string = '''
                 background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%) !important;
             }
 
+            /* Team Summary "Winner" cell highlight (overrides row striping) */
+            .dash-spreadsheet-container .dash-spreadsheet-inner tr .dash-cell.team-winner-blue {
+                background-color: #cce5ff !important;
+                font-weight: bold;
+            }
+
+            .dash-spreadsheet-container .dash-spreadsheet-inner tr .dash-cell.team-winner-red {
+                background-color: #ffcccc !important;
+                font-weight: bold;
+            }
+
             /* Alert Styling */
             .alert-success {
                 background-color: #e8f5e9 !important;
@@ -542,21 +553,18 @@ def create_team_summary_page():
     team_summary_rows = data_service.summarise_team_results().to_dict('records')
     team_points_by_day = data_service.get_team_points_by_day()
 
-    winner_colors = {'Blue': '#cce5ff', 'Red': '#ffcccc'}
+    winner_cell_class = {'Blue': 'dash-cell team-winner-blue', 'Red': 'dash-cell team-winner-red'}
     team_summary_table_rows = []
     for row in team_summary_rows:
         day_data = team_points_by_day.get(row['Year'], {})
         team_summary_table_rows.append(html.Tr([
-            html.Td(row['Year']),
-            html.Td(row['Blue_Points']),
-            html.Td(row['Red_Points']),
-            html.Td(row['Winner'], style={
-                'backgroundColor': winner_colors.get(row['Winner']),
-                'fontWeight': 'bold'
-            }),
+            html.Td(row['Year'], className='dash-cell'),
+            html.Td(row['Blue_Points'], className='dash-cell'),
+            html.Td(row['Red_Points'], className='dash-cell'),
+            html.Td(row['Winner'], className=winner_cell_class.get(row['Winner'], 'dash-cell')),
             html.Td(_build_team_trend_sparkline(
                 day_data.get('days', []), day_data.get('blue', []), day_data.get('red', [])
-            ))
+            ), className='dash-cell')
         ]))
 
     return html.Div([
@@ -567,14 +575,22 @@ def create_team_summary_page():
             html.Span("● Red Team", style={'color': TEAM_RED_COLOR}),
             html.Span(" — cumulative points by day", style={'color': '#666'})
         ], style={'marginBottom': '10px', 'fontSize': '0.9em'}),
-        dbc.Table([
-            html.Thead(html.Tr([
-                html.Th('Year'), html.Th('Blue Points'), html.Th('Red Points'),
-                html.Th('Winner'), html.Th('Trend (by day)')
-            ])),
-            html.Tbody(team_summary_table_rows)
-        ], id='team-summary-table', bordered=False, hover=True, responsive=True,
-            style={'width': 'auto'}),
+        html.Div(className='dash-table-container', children=[
+            html.Div(className='dash-spreadsheet-container', children=[
+                html.Div(className='dash-spreadsheet dash-spreadsheet-inner', children=[
+                    html.Table([
+                        html.Thead(html.Tr([
+                            html.Th('Year', className='dash-header'),
+                            html.Th('Blue Points', className='dash-header'),
+                            html.Th('Red Points', className='dash-header'),
+                            html.Th('Winner', className='dash-header'),
+                            html.Th('Trend (by day)', className='dash-header')
+                        ])),
+                        html.Tbody(team_summary_table_rows)
+                    ])
+                ])
+            ])
+        ], id='team-summary-table'),
 
         html.H2("Overall Player Performance", style={'marginTop': '30px'}),
         dash_table.DataTable(
