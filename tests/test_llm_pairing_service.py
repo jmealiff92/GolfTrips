@@ -151,6 +151,12 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertIn('PENDING MATCHES', prompt)
         self.assertIn('Pending', prompt)
 
+    def test_prompt_warns_against_concluding_no_matches_from_decided_only_result(self):
+        suggester = self._suggester()
+        prompt = suggester._build_suggestion_prompt('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('does NOT mean no matches exist', prompt)
+        self.assertIn("status='all'", prompt)
+
     # ---- response parsing/validation ----
 
     def test_successful_response_parsed_into_pairings(self):
@@ -385,17 +391,17 @@ class TestPairingSuggesterTools(unittest.TestCase):
         self.db_service = MagicMock()
 
         self.data_service.df = pd.DataFrame({
-            'Year': [2026, 2026],
-            'Day': [1, 2],
-            'MatchNumber': [1, 1],
-            'Course': ['Course A', 'Course B'],
-            'MatchType': ['Singles', 'Fourball'],
-            'BluePlayer1': ['Alice', 'Alice'],
-            'BluePlayer2': [None, 'Dave'],
-            'RedPlayer1': ['Bob', 'Bob'],
-            'RedPlayer2': [None, 'Carol'],
-            'Result': ['Blue', 'Half'],
-            'Score': ['3&2', 'AS'],
+            'Year': [2026, 2026, 2027],
+            'Day': [1, 2, 1],
+            'MatchNumber': [1, 1, 1],
+            'Course': ['Course A', 'Course B', 'Course C'],
+            'MatchType': ['Singles', 'Fourball', 'Singles'],
+            'BluePlayer1': ['Alice', 'Alice', 'Eve'],
+            'BluePlayer2': [None, 'Dave', None],
+            'RedPlayer1': ['Bob', 'Bob', 'Frank'],
+            'RedPlayer2': [None, 'Carol', None],
+            'Result': ['Blue', 'Half', ''],
+            'Score': ['3&2', 'AS', ''],
         })
         self.data_service.get_player_performance_all_players.return_value = pd.DataFrame({
             'Player': ['Alice'],
@@ -515,6 +521,61 @@ class TestPairingSuggesterTools(unittest.TestCase):
         payload = json.loads(suggester._execute_tool('get_matches', {'match_type': 'Single'}))
         self.assertIn('error', payload)
         self.assertIn('Single', payload['error'])
+
+    def test_get_matches_default_status_excludes_pending(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {}))
+        self.assertEqual(len(payload['matches']), 2)
+        self.assertTrue(all(m['Result'] for m in payload['matches']))
+
+    def test_get_matches_status_pending_returns_only_undecided(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'status': 'pending'}))
+        self.assertEqual(len(payload['matches']), 1)
+        self.assertEqual(payload['matches'][0]['Year'], 2027)
+        self.assertEqual(payload['matches'][0]['Result'], '')
+        self.assertEqual(payload['matches'][0]['Score'], '')
+
+    def test_get_matches_status_all_returns_everything(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'status': 'all'}))
+        self.assertEqual(len(payload['matches']), 3)
+
+    def test_get_matches_pending_only_year_not_reported_as_no_matches(self):
+        # Direct repro of the bug: a year with ONLY pending matches must not look empty when
+        # explicitly asked for pending/all matches, even though the decided-only default is empty.
+        suggester = self._suggester()
+        default_payload = json.loads(suggester._execute_tool('get_matches', {'year': 2027}))
+        self.assertEqual(default_payload['matches'], [])
+
+        all_payload = json.loads(suggester._execute_tool('get_matches', {'year': 2027, 'status': 'all'}))
+        self.assertEqual(len(all_payload['matches']), 1)
+        self.assertEqual(all_payload['matches'][0]['Year'], 2027)
+
+        pending_payload = json.loads(suggester._execute_tool('get_matches', {'year': 2027, 'status': 'pending'}))
+        self.assertEqual(len(pending_payload['matches']), 1)
+
+    def test_get_matches_year_with_no_matches_at_all_stays_empty(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'year': 2099, 'status': 'all'}))
+        self.assertEqual(payload['matches'], [])
+
+    def test_get_matches_rejects_invalid_status(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'status': 'bogus'}))
+        self.assertIn('error', payload)
+        self.assertIn('bogus', payload['error'])
+
+    def test_get_matches_tool_schema_documents_status_parameter(self):
+        suggester = self._suggester()
+        tool = next(t for t in suggester.TOOLS if t['name'] == 'get_matches')
+        self.assertIn('status', tool['input_schema']['properties'])
+        self.assertIn('pending', tool['input_schema']['properties']['status']['description'])
+
+    def test_get_course_stats_tool_schema_documents_pending_field(self):
+        suggester = self._suggester()
+        tool = next(t for t in suggester.TOOLS if t['name'] == 'get_course_stats')
+        self.assertIn('Pending', tool['description'])
 
     def test_get_player_stats_rejects_invalid_match_type(self):
         suggester = self._suggester()

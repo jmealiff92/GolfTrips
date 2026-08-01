@@ -66,6 +66,7 @@ class PairingSuggestionError(Exception):
 
 
 VALID_MATCH_TYPES = ("Singles", "Fourball")
+VALID_MATCH_STATUSES = ("decided", "pending", "all")
 
 
 class PairingSuggester:
@@ -78,13 +79,15 @@ class PairingSuggester:
             "description": (
                 "Look up individual match results, including each match's score/margin "
                 "(e.g. '3&2', '1 up', 'AS') so you can judge how tight or lopsided it was, and "
-                "exactly who played whom. Only returns matches with a decided result - pending/"
-                "unfinalized matches are omitted. Filter by any combination of year, match type, "
-                "player, and opponent. For a match-type-specific head-to-head (e.g. 'Jeff vs Conor in "
-                "Singles'), pass both player and opponent together with match_type - get_head_to_head "
-                "cannot filter by match_type, only get_matches can. In Singles, player+opponent always "
-                "means they played each other; in Fourball it can also mean they were partners, so "
-                "check the BluePlayer/RedPlayer columns in the result to tell which."
+                "exactly who played whom. By default only returns matches with a decided result - "
+                "pass `status` to include scheduled-but-undecided matches; see the `status` "
+                "parameter description before ever concluding no matches exist for a given year/"
+                "player/filter. Filter by any combination of year, match type, player, and opponent. "
+                "For a match-type-specific head-to-head (e.g. 'Jeff vs Conor in Singles'), pass both "
+                "player and opponent together with match_type - get_head_to_head cannot filter by "
+                "match_type, only get_matches can. In Singles, player+opponent always means they "
+                "played each other; in Fourball it can also mean they were partners, so check the "
+                "BluePlayer/RedPlayer columns in the result to tell which."
             ),
             "input_schema": {
                 "type": "object",
@@ -101,6 +104,24 @@ class PairingSuggester:
                             "Only matches this player AND `player` both appeared in (either as "
                             "opponents or, in Fourball, as partners - see the description above). "
                             "Requires `player` to also be set."
+                        ),
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": list(VALID_MATCH_STATUSES),
+                        "description": (
+                            "Which matches to include, based on whether a result has been recorded. "
+                            "Defaults to 'decided' (only matches with a final Result/Score) - this is "
+                            "the same behavior this tool has always had, since score margins only "
+                            "exist for decided matches. Pass 'pending' to see matches that have been "
+                            "scheduled/created but not yet played (Result and Score will be empty - "
+                            "there's no margin to analyze for these). Pass 'all' for every match "
+                            "regardless of status. IMPORTANT: an empty or short result list under the "
+                            "default 'decided' status does NOT mean no matches exist for that year/"
+                            "player/filter - it only means none are decided yet. Before telling an "
+                            "admin there are no matches for a year or other filter, or when answering "
+                            "a general 'what matches are there' question, call again with "
+                            "status='all' or 'pending' to check for scheduled matches."
                         ),
                     },
                 },
@@ -162,7 +183,12 @@ class PairingSuggester:
         },
         {
             "name": "get_course_stats",
-            "description": "Aggregate Blue/Red record at each golf course played on the trip.",
+            "description": (
+                "Aggregate Blue/Red record at each golf course played on the trip. `Matches` counts "
+                "every match recorded at that course including ones with no result yet - the "
+                "`Pending` field tells you how many of those are still unfinalized. When Pending is "
+                "non-zero, mention it rather than letting the totals look inconsistent."
+            ),
             "input_schema": {"type": "object", "properties": {}},
         },
         {
@@ -647,11 +673,23 @@ day of that year (the last day's leader is the overall winner). Comparing precom
 across years is far less error-prone than comparing point totals by hand, which is where mistakes \
 happen.
 
-PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
-ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \
-count decided matches. When a course breakdown includes pending matches, say so explicitly (e.g. \
+PENDING MATCHES - several tools only count DECIDED (results-in) matches by default, and a short or \
+empty answer from them does NOT mean no matches exist:
+- get_matches defaults to status='decided'. Before ever telling an admin "there are no matches" for \
+a year/player/filter, or before answering a general "what matches are there" / "what's happening in \
+year X" question, call get_matches again with status='all' (or status='pending') to check for \
+scheduled-but-undecided matches, and mention them explicitly if found (e.g. "no decided matches yet \
+for 2026, but there are 4 pending: ..."). Never report "0 results" from the default decided-only call \
+as evidence that nothing has been scheduled.
+- get_player_course_performance and get_course_stats count every match recorded, including ones with \
+no result yet (see their `Pending` field), unlike get_matches/get_player_stats which only count \
+decided matches by default. When a course breakdown includes pending matches, say so explicitly (e.g. \
 "2-0 completed at Druids Heath, 1 match still pending") rather than treating the raw match count as \
 decided results - this matters for pairing decisions since only locked-in results are real signal.
+- get_year_summary and get_team_points_by_day only tally decided results into their point totals; a \
+year or day with only pending matches can show up looking like "0-0" or an unchanged/tied score rather \
+than "not yet played." If a year's summary looks suspiciously empty or tied at 0, cross-check with \
+get_matches (status='pending' or 'all') before reporting a final score or winner.
 
 SCOPE - the Fourball-only data above is for judging pairings. It is NOT the player's overall record. \
 If the admin asks a general question about a player (their record, how good they are, how they've been \
@@ -846,9 +884,19 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 f"invalid match_type {match_type!r}; must be one of {list(VALID_MATCH_TYPES)} or omitted"
             )
 
+    @staticmethod
+    def _validate_status(status: Optional[str]) -> None:
+        if status is not None and status not in VALID_MATCH_STATUSES:
+            raise ValueError(
+                f"invalid status {status!r}; must be one of {list(VALID_MATCH_STATUSES)} or omitted"
+            )
+
     def _tool_get_matches(self, year: Optional[int] = None, match_type: Optional[str] = None,
-                           player: Optional[str] = None, opponent: Optional[str] = None) -> str:
+                           player: Optional[str] = None, opponent: Optional[str] = None,
+                           status: Optional[str] = None) -> str:
         self._validate_match_type(match_type)
+        self._validate_status(status)
+        status = status or "decided"
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({"matches": []})
@@ -867,7 +915,11 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 (df['BluePlayer1'] == opponent) | (df['BluePlayer2'] == opponent) |
                 (df['RedPlayer1'] == opponent) | (df['RedPlayer2'] == opponent)
             ]
-        df = df[df['Result'].notna() & (df['Result'] != '')]
+        if status == "decided":
+            df = df[df['Result'].notna() & (df['Result'] != '')]
+        elif status == "pending":
+            df = df[df['Result'].isna() | (df['Result'] == '')]
+        # status == "all": no filter
 
         cols = ['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
                 'BluePlayer1', 'BluePlayer2', 'RedPlayer1', 'RedPlayer2', 'Result', 'Score']
@@ -906,6 +958,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_course_stats(self) -> str:
         df = self.data_service.get_course_statistics()
+        if df is not None and not df.empty:
+            df = df.copy()
+            df['Pending'] = df['Matches'] - (df['Blue_Wins'] + df['Red_Wins'] + df['Halves'])
         return json.dumps({"courses": _df_records(df)}, default=_json_default)
 
     def _tool_get_player_course_performance(self, player: str) -> str:
