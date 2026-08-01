@@ -7,7 +7,9 @@ import anthropic
 import httpx
 import pandas as pd
 
-from src.llm_pairing_service import PairingSuggester, PairingSuggestionError, _serialize_content_blocks
+from src.llm_pairing_service import (
+    PairingSuggester, PairingSuggestionError, _serialize_content_blocks, _summarize_conversation_shape,
+)
 
 
 class FakeTextBlock:
@@ -99,6 +101,37 @@ class TestSerializeContentBlocks(unittest.TestCase):
         result = _serialize_content_blocks(blocks)
         self.assertEqual(result[0]['type'], 'thinking')
         self.assertEqual(result[1]['type'], 'tool_use')
+
+
+class TestSummarizeConversationShape(unittest.TestCase):
+    """_summarize_conversation_shape must never itself raise, however malformed the conversation
+    is - it exists specifically to describe a broken shape in the logs when the API rejects one."""
+
+    def test_summarizes_string_content(self):
+        result = _summarize_conversation_shape([{'role': 'user', 'content': 'hello there'}])
+        self.assertEqual(result, [{'index': 0, 'role': 'user', 'content_type': 'str', 'len': 11}])
+
+    def test_summarizes_block_list_content(self):
+        conversation = [{'role': 'assistant', 'content': [
+            {'type': 'thinking', 'thinking': 'x', 'signature': 'y'},
+            {'type': 'tool_use', 'id': 'i', 'name': 'n', 'input': {}},
+        ]}]
+        result = _summarize_conversation_shape(conversation)
+        self.assertEqual(result, [{
+            'index': 0, 'role': 'assistant', 'content_type': 'list', 'blocks': ['thinking', 'tool_use'],
+        }])
+
+    def test_flags_non_list_conversation(self):
+        result = _summarize_conversation_shape("not a list")
+        self.assertIn('error', result[0])
+
+    def test_flags_non_dict_message(self):
+        result = _summarize_conversation_shape(['not a dict'])
+        self.assertEqual(result, [{'index': 0, 'error': 'not a dict: str'}])
+
+    def test_flags_unexpected_content_type(self):
+        result = _summarize_conversation_shape([{'role': 'user', 'content': None}])
+        self.assertEqual(result, [{'index': 0, 'role': 'user', 'content_type': 'NoneType'}])
 
 
 class TestPairingSuggester(unittest.TestCase):
@@ -324,6 +357,23 @@ class TestPairingSuggester(unittest.TestCase):
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
+
+    def test_bad_request_error_logs_conversation_shape_and_is_wrapped_gracefully(self):
+        """A 400 'Input does not match the expected shape' error falls through to the generic
+        APIError handler, which should log the conversation's structure (not just re-raise blind)
+        so a malformed shape is diagnosable from the logs rather than requiring a guess."""
+        suggester = self._suggester()
+        request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        response = httpx.Response(400, request=request)
+        fake_client = _stream_client(error=anthropic.BadRequestError(
+            'messages.0: Input does not match the expected shape.', response=response, body=None
+        ))
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertLogs('src.llm_pairing_service', level='WARNING') as log_ctx:
+                with self.assertRaises(PairingSuggestionError) as ctx:
+                    suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('does not match the expected shape', str(ctx.exception))
+        self.assertTrue(any('conversation shape' in message for message in log_ctx.output))
 
     def test_timeout_error_is_wrapped_gracefully_and_distinctly(self):
         suggester = self._suggester()

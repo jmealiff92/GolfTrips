@@ -48,6 +48,30 @@ def _df_records(df) -> list:
     return df.where(df.notnull(), None).to_dict('records')
 
 
+def _summarize_conversation_shape(conversation) -> list:
+    """Compact, log-safe structural summary of a `messages` list - role, content type, and (for
+    block-list content) each block's type - for diagnosing 'Input does not match the expected
+    shape' API errors without dumping full message text into the logs."""
+    if not isinstance(conversation, list):
+        return [{"error": f"conversation is not a list: {type(conversation).__name__}"}]
+    summary = []
+    for i, msg in enumerate(conversation):
+        if not isinstance(msg, dict):
+            summary.append({"index": i, "error": f"not a dict: {type(msg).__name__}"})
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            summary.append({"index": i, "role": msg.get("role"), "content_type": "str", "len": len(content)})
+        elif isinstance(content, list):
+            summary.append({
+                "index": i, "role": msg.get("role"), "content_type": "list",
+                "blocks": [b.get("type") if isinstance(b, dict) else type(b).__name__ for b in content],
+            })
+        else:
+            summary.append({"index": i, "role": msg.get("role"), "content_type": type(content).__name__})
+    return summary
+
+
 def _serialize_content_blocks(blocks) -> list[dict]:
     """Anthropic SDK response content blocks -> plain JSON-safe dicts, for storing in dcc.Store
     and replaying back to the API on the next turn. Every block type Claude can return in a
@@ -905,7 +929,10 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 "Could not reach the Claude API. Check your network connection and try again."
             ) from e
         except anthropic.APIError as e:
-            logger.warning("Claude API error: %s", e)
+            logger.warning(
+                "Claude API error: %s | conversation shape: %s",
+                e, _summarize_conversation_shape(conversation)
+            )
             raise PairingSuggestionError(f"Claude API returned an error: {e}") from e
 
         block_types = [getattr(block, "type", None) for block in response.content]
