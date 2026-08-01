@@ -63,6 +63,7 @@ def main():
             handicap_index_p3=15.0,
             handicap_index_p4=None,
             slope_rating=130,
+            course_rating=72.0,
             par=72
         )
         print(f"   ✓ Singles calculation: Player 1 gets {handicaps[0]} strokes, Player 2 gets {handicaps[1]} strokes")
@@ -75,6 +76,7 @@ def main():
             handicap_index_p3=8.0,
             handicap_index_p4=12.0,
             slope_rating=130,
+            course_rating=72.0,
             par=72
         )
         print(f"   ✓ Fourball calculation: {handicaps}")

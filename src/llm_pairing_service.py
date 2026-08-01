@@ -1286,7 +1286,8 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                     match_type="Singles",
                     handicap_index_p1=blue[0]["handicap_index"], handicap_index_p2=None,
                     handicap_index_p3=red[0]["handicap_index"], handicap_index_p4=None,
-                    slope_rating=course_info["slope_rating"], par=course_info["par"],
+                    slope_rating=course_info["slope_rating"],
+                    course_rating=course_info["course_rating"], par=course_info["par"],
                 )
                 blue_hcp, red_hcp = [p1_hcp, None], [p3_hcp, None]
             else:
@@ -1294,7 +1295,8 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                     match_type="Fourball",
                     handicap_index_p1=blue[0]["handicap_index"], handicap_index_p2=blue[1]["handicap_index"],
                     handicap_index_p3=red[0]["handicap_index"], handicap_index_p4=red[1]["handicap_index"],
-                    slope_rating=course_info["slope_rating"], par=course_info["par"],
+                    slope_rating=course_info["slope_rating"],
+                    course_rating=course_info["course_rating"], par=course_info["par"],
                 )
                 blue_hcp, red_hcp = [p1_hcp, p2_hcp], [p3_hcp, p4_hcp]
 

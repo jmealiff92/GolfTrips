@@ -307,7 +307,7 @@ The application now has 8 pages:
 
 **Course Handicap**:
 ```
-Course Handicap = Handicap Index × (Slope Rating ÷ 113)
+Course Handicap = Handicap Index × (Slope Rating ÷ 113) + (Course Rating - Par)
 ```
 
 **Singles Match (100% Allowance)**:
