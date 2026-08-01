@@ -59,6 +59,15 @@ pairing_suggester = PairingSuggester(data_service, db_service)
 cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
 background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
 
+# Server-side backup of each admin's Captain Claude conversation, keyed by (email, year). The
+# pairing-conversation-store/pairing-chat-component state below only lives in the browser tab's
+# memory (dcc.Store default storage_type) - if that tab is backgrounded/reloaded while a reply is
+# still generating, the background callback finishes and writes its result, but there's no live
+# tab left to poll for it and the reply is lost from the UI even though it completed. Saving a copy
+# here as each turn lands lets update_pairing_roster restore the latest known conversation whenever
+# the page (re)loads, instead of always starting blank.
+pairing_chat_cache = diskcache.Cache(os.path.join(cache_dir, 'pairing_chat_sessions'))
+
 # Initialize Dash app with improved theme
 app = dash.Dash(
     __name__,
@@ -2527,8 +2536,11 @@ def update_pairing_roster(year, team):
     Chat context now covers both teams' full rosters for the year (see
     PairingSuggester._build_chat_context_block), so only a changed year invalidates it - the team
     filter just changes which roster is checkable for pairing suggestions, and the chat still
-    knows about every player regardless. A year change resets the chat conversation/log and any
-    pending background-callback trigger; a team-only change leaves the chat alone.
+    knows about every player regardless. A year change restores that user's last known conversation
+    for the new year from pairing_chat_cache (or starts blank if there isn't one) rather than always
+    wiping it - this is also what runs on page load, so a reply that finished generating after the
+    tab was backgrounded/reloaded and never reached the live page still shows up when it's reopened.
+    A team-only change leaves the chat alone.
     """
     if not year or not team:
         return [], [], None, [], None, None
@@ -2540,6 +2552,11 @@ def update_pairing_roster(year, team):
     trigger_id = callback_context.triggered[0]['prop_id'].split('.')[0] if callback_context.triggered else None
     if trigger_id == 'pairing-team-filter':
         return options, [], no_update, no_update, no_update, no_update
+
+    email = get_current_user_email()
+    cached = pairing_chat_cache.get((email, year)) if email else None
+    if cached:
+        return options, [], cached.get('conversation'), cached.get('messages', []), None, None
     return options, [], None, [], None, None
 
 
@@ -2696,9 +2713,17 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
         })
         return messages, no_update
 
+    email = get_current_user_email()
+    if email and year:
+        # Back up the user's own message right away (not just the eventual reply) - the
+        # background callback below can take up to a minute for a tool-heavy question, and if the
+        # tab gets backgrounded/reloaded before it finishes, restoring from this snapshot alone at
+        # least preserves "I asked X" instead of silently dropping the message too.
+        pairing_chat_cache.set((email, year), {'conversation': conversation, 'messages': messages})
+
     return messages, {
         'team': team, 'year': year, 'available_players': available_players,
-        'conversation': conversation, 'user_message': user_message,
+        'conversation': conversation, 'user_message': user_message, 'email': email,
     }
 
 
@@ -2719,7 +2744,7 @@ def run_pairing_chat_message_background(trigger, messages):
     if not trigger:
         return no_update, no_update
 
-    team, year = trigger['team'], trigger['year']
+    team, year, email = trigger['team'], trigger['year'], trigger.get('email')
     messages = list(messages or [])
 
     try:
@@ -2728,6 +2753,12 @@ def run_pairing_chat_message_background(trigger, messages):
         )
         logger.info("Pairing chat reply sent (%d chars)", len(result['reply']))
         messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': result['reply']})
+        if email and year:
+            # This background job runs to completion (and writes its result) regardless of whether
+            # a live tab is still around to poll for it - persist it here so a reply that finished
+            # after the tab was backgrounded/reloaded isn't lost, and shows up next time
+            # update_pairing_roster loads this user's conversation for this year.
+            pairing_chat_cache.set((email, year), {'conversation': result['conversation'], 'messages': messages})
         return result['conversation'], messages
     except PairingSuggestionError as e:
         logger.warning("Pairing chat failed (team=%s, year=%s): %s", team, year, e)
