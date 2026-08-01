@@ -455,6 +455,23 @@ app.index_string = '''
             {%scripts%}
             {%renderer%}
         </footer>
+        <script>
+            // dash-chat's ChatComponent (Captain Claude chat) submits on any bare Enter with no
+            // Shift/Ctrl check and no prop to configure it, so multi-line messages get cut off
+            // mid-sentence. Intercept the keydown in the capture phase - before dash-chat's own
+            // React handler runs - so plain Enter/Shift+Enter inserts a newline as normal, and
+            // Ctrl/Cmd+Enter (or the component's own Send button, unaffected by this) submits.
+            // This targets dash-chat's internal 'message-input-field' class rather than a
+            // supported prop, since none exists - if dash-chat is ever upgraded, re-verify this
+            // still applies (worst case on drift: silently reverts to submit-on-Enter).
+            document.addEventListener('keydown', function(event) {
+                if (event.key !== 'Enter') return;
+                if (!event.target || !event.target.classList ||
+                    !event.target.classList.contains('message-input-field')) return;
+                if (event.ctrlKey || event.metaKey) return;  // let it submit as usual
+                event.stopPropagation();  // block dash-chat's submit handler; native newline still happens
+            }, true);
+        </script>
     </body>
 </html>
 '''
