@@ -510,6 +510,18 @@ class TestPairingSuggesterTools(unittest.TestCase):
         suggester._execute_tool('get_player_stats', {'player': 'Alice', 'match_type': 'Singles'})
         self.data_service.get_player_performance_all_players.assert_called_once_with('Singles')
 
+    def test_get_matches_rejects_invalid_match_type(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_matches', {'match_type': 'Single'}))
+        self.assertIn('error', payload)
+        self.assertIn('Single', payload['error'])
+
+    def test_get_player_stats_rejects_invalid_match_type(self):
+        suggester = self._suggester()
+        payload = json.loads(suggester._execute_tool('get_player_stats', {'player': 'Alice', 'match_type': 'single'}))
+        self.assertIn('error', payload)
+        self.data_service.get_player_performance_all_players.assert_not_called()
+
     def test_get_player_stats_unknown_player_returns_no_stats(self):
         suggester = self._suggester()
         payload = json.loads(suggester._execute_tool('get_player_stats', {'player': 'Zed'}))

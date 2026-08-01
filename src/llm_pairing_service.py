@@ -59,6 +59,9 @@ class PairingSuggestionError(Exception):
     """Raised when pairing suggestions can't be produced; message is safe to show in the UI."""
 
 
+VALID_MATCH_TYPES = ("Singles", "Fourball")
+
+
 class PairingSuggester:
     """Uses the Claude API to suggest fourball partnerships and answer stats questions for one team."""
 
@@ -81,7 +84,7 @@ class PairingSuggester:
                 "properties": {
                     "year": {"type": "integer", "description": "Trip year, e.g. 2026"},
                     "match_type": {
-                        "type": "string", "enum": ["Singles", "Fourball"],
+                        "type": "string", "enum": list(VALID_MATCH_TYPES),
                         "description": "Omit to include both Singles and Fourball matches.",
                     },
                     "player": {"type": "string", "description": "Only matches this player appeared in"},
@@ -111,7 +114,7 @@ class PairingSuggester:
                 "properties": {
                     "player": {"type": "string"},
                     "match_type": {
-                        "type": "string", "enum": ["Singles", "Fourball"],
+                        "type": "string", "enum": list(VALID_MATCH_TYPES),
                         "description": "Omit for the player's combined record across all match types.",
                     },
                     "year": {"type": "integer", "description": "Year to look up the handicap index for"},
@@ -600,8 +603,16 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             logger.warning("Tool '%s' failed: %s", name, e)
             return json.dumps({"error": str(e)})
 
+    @staticmethod
+    def _validate_match_type(match_type: Optional[str]) -> None:
+        if match_type is not None and match_type not in VALID_MATCH_TYPES:
+            raise ValueError(
+                f"invalid match_type {match_type!r}; must be one of {list(VALID_MATCH_TYPES)} or omitted"
+            )
+
     def _tool_get_matches(self, year: Optional[int] = None, match_type: Optional[str] = None,
                            player: Optional[str] = None, opponent: Optional[str] = None) -> str:
+        self._validate_match_type(match_type)
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({"matches": []})
@@ -629,6 +640,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_player_stats(self, player: str, match_type: Optional[str] = None,
                                 year: Optional[int] = None) -> str:
+        self._validate_match_type(match_type)
         df = self.data_service.get_player_performance_all_players(match_type or None)
         stats = None
         if df is not None and not df.empty:
