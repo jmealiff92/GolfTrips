@@ -90,8 +90,8 @@ class TestHandicapCalculator(unittest.TestCase):
             course_handicap_p3=10,
             course_handicap_p4=10
         )
-        # Lowest is 5, others get (10-5)*0.85 = 4.25 -> 4
-        self.assertEqual(result, (0, 4, 4, 4))
+        # Lowest is 5, others get (10-5)*0.90 = 4.5 -> 5
+        self.assertEqual(result, (0, 5, 5, 5))
 
     def test_fourball_varied_handicaps(self):
         """Test fourball with varied handicaps"""
@@ -102,21 +102,21 @@ class TestHandicapCalculator(unittest.TestCase):
             course_handicap_p4=15
         )
         # Lowest is 8
-        # p1: (8-8)*0.85 = 0
-        # p2: (12-8)*0.85 = 3.4 -> 3
-        # p3: (10-8)*0.85 = 1.7 -> 2
-        # p4: (15-8)*0.85 = 5.95 -> 6
-        self.assertEqual(result, (0, 3, 2, 6))
+        # p1: (8-8)*0.90 = 0
+        # p2: (12-8)*0.90 = 3.6 -> 4
+        # p3: (10-8)*0.90 = 1.8 -> 2
+        # p4: (15-8)*0.90 = 6.3 -> 6
+        self.assertEqual(result, (0, 4, 2, 6))
 
-    def test_fourball_85_percent_allowance(self):
-        """Test that fourball uses 85% allowance"""
+    def test_fourball_90_percent_allowance(self):
+        """Test that fourball uses 90% allowance"""
         result = HandicapCalculator.calculate_playing_handicap_fourball(
             course_handicap_p1=10,
             course_handicap_p2=10,
             course_handicap_p3=10,
             course_handicap_p4=20
         )
-        # Lowest is 10, p4 gets (20-10)*0.85 = 8.5 -> 9 (not 10)
+        # Lowest is 10, p4 gets (20-10)*0.90 = 9.0 -> 9 (not 10)
         self.assertEqual(result[3], 9)
 
     def test_fourball_rounding(self):
@@ -128,9 +128,9 @@ class TestHandicapCalculator(unittest.TestCase):
             course_handicap_p4=13
         )
         # Lowest is 10
-        # p2: (11-10)*0.85 = 0.85 -> 1
-        # p3: (12-10)*0.85 = 1.7 -> 2
-        # p4: (13-10)*0.85 = 2.55 -> 3
+        # p2: (11-10)*0.90 = 0.9 -> 1
+        # p3: (12-10)*0.90 = 1.8 -> 2
+        # p4: (13-10)*0.90 = 2.7 -> 3
         self.assertEqual(result, (0, 1, 2, 3))
 
     def test_complete_singles_calculation(self):
@@ -166,13 +166,13 @@ class TestHandicapCalculator(unittest.TestCase):
         # p3: 10*(120/113)=10.62->11 (rounds to 11)
         # p4: 15*(120/113)=15.93->16 (rounds to 16)
         # Lowest is 8 (p1)
-        # Playing handicaps with 85% allowance (using standard round-half-up):
+        # Playing handicaps with 90% allowance (using standard round-half-up):
         # p1: 0
-        # p2: (13-8)*0.85=4.25->4 (rounds up)
-        # p3: (11-8)*0.85=2.55->3 (rounds up)
-        # p4: (16-8)*0.85=6.8->7 (rounds up)
+        # p2: (13-8)*0.90=4.5->5 (rounds up)
+        # p3: (11-8)*0.90=2.7->3 (rounds up)
+        # p4: (16-8)*0.90=7.2->7
         self.assertEqual(len(result), 4)
-        self.assertEqual(result, (0, 4, 3, 7))
+        self.assertEqual(result, (0, 5, 3, 7))
 
     def test_invalid_match_type(self):
         """Test that invalid match type raises error"""

@@ -90,7 +90,7 @@ golf-trips/
 ### Auto-Calculate Handicaps
 The system automatically calculates match handicaps using the World Handicap System (WHS):
 - **Singles**: 100% allowance
-- **Fourball**: 85% allowance
+- **Fourball**: 90% allowance
 
 Simply add player handicap indexes and course ratings, and the system handles the rest!
 

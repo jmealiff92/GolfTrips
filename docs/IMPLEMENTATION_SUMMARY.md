@@ -52,7 +52,7 @@ This document summarizes the implementation of new features for the Golf Trips a
 **Features**:
 - Automatically calculate match handicaps when players and course are selected
 - Uses HandicapCalculator with WHS (World Handicap System) formulas
-- Supports both Singles (100% allowance) and Fourball (85% allowance)
+- Supports both Singles (100% allowance) and Fourball (90% allowance)
 - Fetches player handicap indexes from database based on selected year
 - Uses course slope rating and par for calculations
 
@@ -76,7 +76,7 @@ This document summarizes the implementation of new features for the Golf Trips a
 
 # Fourball: Players with indexes 10, 15, 8, 12
 # Course: Slope 130, Par 72
-# Result: Lowest handicap (8) gets 0, others get 85% of difference
+# Result: Lowest handicap (8) gets 0, others get 90% of difference
 ```
 
 ### 4. Match Edit Functionality ✅
@@ -127,7 +127,7 @@ This document summarizes the implementation of new features for the Golf Trips a
 
 #### Match Creation Tests
 - `test_singles_match_auto_calculation()`: Singles with auto-calculated handicaps
-- `test_fourball_match_auto_calculation()`: Fourball with 85% allowance
+- `test_fourball_match_auto_calculation()`: Fourball with 90% allowance
 - Verifies HandicapCalculator integration
 
 #### Match Edit Tests
@@ -316,10 +316,10 @@ Lower handicap player: 0 strokes
 Higher handicap player: difference in course handicaps
 ```
 
-**Fourball Match (85% Allowance)**:
+**Fourball Match (90% Allowance)**:
 ```
 Lowest course handicap player: 0 strokes
-Others: (Their Course Handicap - Lowest) × 0.85
+Others: (Their Course Handicap - Lowest) × 0.90
 ```
 
 All values rounded using standard rounding (round half up).
