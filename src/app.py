@@ -56,8 +56,17 @@ pairing_suggester = PairingSuggester(data_service, db_service)
 # suggestions/chat) - runs them in a subprocess and returns the initial HTTP response immediately,
 # so a long Claude call can't get killed by a proxy/Gunicorn request timeout. The frontend polls a
 # small status endpoint instead of holding one connection open for the whole call.
+#
+# Dash writes each job's final result via a bare cache.set(result_key, ...) with no retry (see
+# dash/background_callback/managers/diskcache_manager.py) - if that single write hits SQLite lock
+# contention on this file (plausible for a 40-90s tool-heavy reply, with the browser polling this
+# same cache the whole time), diskcache raises Timeout and the job dies right there: the callback
+# function already finished, but Dash never gets to write the "done" marker, so the live page polls
+# forever and the chat's typing indicator never clears - only a refresh (which now reads from the
+# DB-backed pairing_chat_sessions table instead of this cache) recovers it. Raising the SQLite lock
+# timeout here reduces how often that write loses the race.
 cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
-background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
+background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir, timeout=120))
 
 # Initialize Dash app with improved theme
 app = dash.Dash(
