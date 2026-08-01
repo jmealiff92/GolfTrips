@@ -67,7 +67,7 @@ Both implementations call `init_db()` on construction, creating tables (`players
 
 ### Handicap calculations
 
-`src/handicap_calculator.py` (`HandicapCalculator`) implements WHS/R&A match-play formulas as static methods: course handicap = `index × slope/113`, then playing handicaps with 100% allowance for Singles and 85% allowance for Fourball (lowest handicap in the group plays off scratch). Rounding uses `ROUND_HALF_UP`, not Python's default banker's rounding — use `HandicapCalculator._round_half_up` for consistency rather than `round()`.
+`src/handicap_calculator.py` (`HandicapCalculator`) implements WHS/R&A match-play formulas as static methods: course handicap = `index × slope/113`, then playing handicaps with 100% allowance for Singles and 90% allowance for Fourball (lowest handicap in the group plays off scratch). Rounding uses `ROUND_HALF_UP`, not Python's default banker's rounding — use `HandicapCalculator._round_half_up` for consistency rather than `round()`.
 
 ### App / UI layer
 

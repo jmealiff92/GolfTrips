@@ -77,12 +77,12 @@ class HandicapCalculator:
                                            course_handicap_p2: int,
                                            course_handicap_p3: int,
                                            course_handicap_p4: int,
-                                           allowance: float = 0.85) -> tuple[int, int, int, int]:
+                                           allowance: float = 0.90) -> tuple[int, int, int, int]:
         """
         Calculate playing handicaps for fourball (better ball) match play (R&A WHS)
 
         In fourball match play:
-        - 85% allowance is standard (per R&A recommendation)
+        - 90% allowance is standard (per R&A Appendix C recommendation)
         - Lowest course handicap plays off 0
         - Others receive allowanced difference from the lowest
 
@@ -91,7 +91,7 @@ class HandicapCalculator:
             course_handicap_p2: Course handicap for team 1 player 2
             course_handicap_p3: Course handicap for team 2 player 1
             course_handicap_p4: Course handicap for team 2 player 2
-            allowance: Percentage allowance (default 0.85 = 85% for fourball)
+            allowance: Percentage allowance (default 0.90 = 90% for fourball)
 
         Returns:
             Tuple of (p1_playing_hcp, p2_playing_hcp, p3_playing_hcp, p4_playing_hcp)
@@ -121,7 +121,7 @@ class HandicapCalculator:
 
         Uses WHS (World Handicap System) as implemented by R&A:
         - Singles: 100% allowance
-        - Fourball: 85% allowance
+        - Fourball: 90% allowance
 
         Args:
             match_type: 'Singles' or 'Fourball'
@@ -158,9 +158,9 @@ class HandicapCalculator:
             ch_p4 = HandicapCalculator.calculate_course_handicap(
                 handicap_index_p4, slope_rating, par)
 
-            # Calculate playing handicaps with 85% allowance (fourball standard)
+            # Calculate playing handicaps with 90% allowance (fourball standard)
             return HandicapCalculator.calculate_playing_handicap_fourball(
-                ch_p1, ch_p2, ch_p3, ch_p4, allowance=0.85)
+                ch_p1, ch_p2, ch_p3, ch_p4, allowance=0.90)
 
         else:
             raise ValueError(f"Unknown match type: {match_type}")

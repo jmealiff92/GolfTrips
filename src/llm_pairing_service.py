@@ -648,8 +648,8 @@ Red team ({len(red_players)}): {', '.join(red_players) or 'none assigned'}
         match_history_text = self._format_match_history(players)
 
         return f"""Fourball background: in fourball match play, each pair's better score counts on each hole. Playing \
-handicaps use an 85% allowance, with the lowest course handicap in the group playing to scratch and \
-everyone else receiving 85% of the difference - so pairing two very low-handicap players together does \
+handicaps use a 90% allowance, with the lowest course handicap in the group playing to scratch and \
+everyone else receiving 90% of the difference - so pairing two very low-handicap players together does \
 not by itself create an unfair advantage within their own pair.
 
 The sections below are scoped to Fourball only, since that's the match type these pairings are for:

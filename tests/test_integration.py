@@ -254,7 +254,7 @@ class TestMatchCreationWithAutoCalculation(unittest.TestCase):
         # Get course info
         course = self.db_service.get_course("Test Course")
 
-        # Calculate handicaps (85% for fourball)
+        # Calculate handicaps (90% for fourball)
         handicaps = HandicapCalculator.calculate_match_handicaps(
             match_type='Fourball',
             handicap_index_p1=p1_index,
