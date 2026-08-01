@@ -66,6 +66,7 @@ class PairingSuggestionError(Exception):
 
 
 VALID_MATCH_TYPES = ("Singles", "Fourball")
+VALID_MATCH_STATUSES = ("decided", "pending", "all")
 
 
 class PairingSuggester:
@@ -78,13 +79,15 @@ class PairingSuggester:
             "description": (
                 "Look up individual match results, including each match's score/margin "
                 "(e.g. '3&2', '1 up', 'AS') so you can judge how tight or lopsided it was, and "
-                "exactly who played whom. Only returns matches with a decided result - pending/"
-                "unfinalized matches are omitted. Filter by any combination of year, match type, "
-                "player, and opponent. For a match-type-specific head-to-head (e.g. 'Jeff vs Conor in "
-                "Singles'), pass both player and opponent together with match_type - get_head_to_head "
-                "cannot filter by match_type, only get_matches can. In Singles, player+opponent always "
-                "means they played each other; in Fourball it can also mean they were partners, so "
-                "check the BluePlayer/RedPlayer columns in the result to tell which."
+                "exactly who played whom. By default only returns matches with a decided result - "
+                "pass `status` to include scheduled-but-undecided matches; see the `status` "
+                "parameter description before ever concluding no matches exist for a given year/"
+                "player/filter. Filter by any combination of year, match type, player, and opponent. "
+                "For a match-type-specific head-to-head (e.g. 'Jeff vs Conor in Singles'), pass both "
+                "player and opponent together with match_type - get_head_to_head cannot filter by "
+                "match_type, only get_matches can. In Singles, player+opponent always means they "
+                "played each other; in Fourball it can also mean they were partners, so check the "
+                "BluePlayer/RedPlayer columns in the result to tell which."
             ),
             "input_schema": {
                 "type": "object",
@@ -101,6 +104,24 @@ class PairingSuggester:
                             "Only matches this player AND `player` both appeared in (either as "
                             "opponents or, in Fourball, as partners - see the description above). "
                             "Requires `player` to also be set."
+                        ),
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": list(VALID_MATCH_STATUSES),
+                        "description": (
+                            "Which matches to include, based on whether a result has been recorded. "
+                            "Defaults to 'decided' (only matches with a final Result/Score) - this is "
+                            "the same behavior this tool has always had, since score margins only "
+                            "exist for decided matches. Pass 'pending' to see matches that have been "
+                            "scheduled/created but not yet played (Result and Score will be empty - "
+                            "there's no margin to analyze for these). Pass 'all' for every match "
+                            "regardless of status. IMPORTANT: an empty or short result list under the "
+                            "default 'decided' status does NOT mean no matches exist for that year/"
+                            "player/filter - it only means none are decided yet. Before telling an "
+                            "admin there are no matches for a year or other filter, or when answering "
+                            "a general 'what matches are there' question, call again with "
+                            "status='all' or 'pending' to check for scheduled matches."
                         ),
                     },
                 },
@@ -162,7 +183,12 @@ class PairingSuggester:
         },
         {
             "name": "get_course_stats",
-            "description": "Aggregate Blue/Red record at each golf course played on the trip.",
+            "description": (
+                "Aggregate Blue/Red record at each golf course played on the trip. `Matches` counts "
+                "every match recorded at that course including ones with no result yet - the "
+                "`Pending` field tells you how many of those are still unfinalized. When Pending is "
+                "non-zero, mention it rather than letting the totals look inconsistent."
+            ),
             "input_schema": {"type": "object", "properties": {}},
         },
         {
@@ -274,14 +300,18 @@ class PairingSuggester:
                 "listed problems to the admin and ask them to clarify rather than guessing. Handicaps "
                 "are computed automatically the same way the Add Match page does - never pass or ask "
                 "for them yourself, using whatever par/slope rating/course rating is on file for the "
-                "resolved course. Because those values directly affect the handicaps this tool computes, "
-                "every call must be confirmed: the first call (with confirm_course_details omitted or "
-                "false) creates nothing and instead returns 'confirm_course_details' with the resolved "
-                "course's current par/slope rating/course rating - read those numbers back to the admin "
-                "and ask them to confirm they're correct (or use update_course first if they're wrong), "
-                "then call create_matches again with confirm_course_details=true and the same arguments "
-                "to actually create the matches. Skip asking again within the same request only if the "
-                "admin already stated the course's par/slope/rating themselves in this exchange."
+                "resolved course. Nothing is ever created on the first call: with `confirm` omitted or "
+                "false, this validates everything and returns 'confirm_required' with a full preview - "
+                "the course's par/slope rating/course rating, plus each proposed match's Blue vs Red "
+                "players and their computed handicaps - and creates nothing. Read that preview back to "
+                "the admin in full (don't just say 'ready to create X matches' - list who's on each side "
+                "and the handicaps) and wait for their explicit go-ahead in a NEW message. Only then call "
+                "create_matches again with confirm=true and the exact same year/day/course/matches to "
+                "actually create them. Never call it twice with confirm=true in the same turn - always "
+                "stop and wait for the admin's next message after showing the preview. If the admin "
+                "points out something wrong in the preview (course numbers, pairings), fix the input "
+                "(e.g. update_course, or correct the matches list) and preview again rather than forcing "
+                "confirm=true through."
             ),
             "input_schema": {
                 "type": "object",
@@ -308,12 +338,13 @@ class PairingSuggester:
                             "required": ["match_type", "side_a_players", "side_b_players"],
                         },
                     },
-                    "confirm_course_details": {
+                    "confirm": {
                         "type": "boolean",
                         "description": (
-                            "Set true only on a second call, after the admin has confirmed the course's "
-                            "par/slope rating/course rating (returned by the first call) are correct. "
-                            "Omit or leave false on the first attempt."
+                            "Set true only on a second call, after the admin has explicitly approved the "
+                            "preview (course details + resolved matches/handicaps) returned by the first "
+                            "call. Omit or leave false on the first attempt - nothing is created until "
+                            "confirm=true."
                         ),
                     },
                 },
@@ -394,7 +425,15 @@ class PairingSuggester:
                 "fourball_side_a/fourball_side_b rules apply) - it searches decided (non-pending) matches "
                 "instead of pending ones, resets the match back to pending (no result, no score), and you "
                 "don't need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies "
-                "if it can't find exactly one match to clear."
+                "if it can't find exactly one match to clear. Nothing is ever written on the first call: "
+                "with `confirm` omitted or false, once a single matching match is found and the "
+                "result/score are valid, this returns 'confirm_required' with a preview of exactly what "
+                "would change (the match's year/day/course/players and the proposed result/score, or "
+                "'reset to pending' for outcome='clear') and writes nothing. Read that preview back to "
+                "the admin (e.g. 'I'll record Jeff beat Conor 1UP for the Year 2026 Day 2 match at Druids "
+                "Glen - confirm?') and wait for their explicit go-ahead in a NEW message before calling "
+                "again with confirm=true and the same arguments. Never call it twice with confirm=true in "
+                "the same turn."
             ),
             "input_schema": {
                 "type": "object",
@@ -435,6 +474,14 @@ class PairingSuggester:
                     },
                     "year": {"type": "integer", "description": "Omit unless the admin stated it."},
                     "day": {"type": "integer", "description": "Omit unless the admin stated it."},
+                    "confirm": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true only on a second call, after the admin has explicitly approved the "
+                            "preview returned by the first call. Omit or leave false on the first "
+                            "attempt - nothing is written until confirm=true."
+                        ),
+                    },
                 },
                 "required": ["outcome"],
             },
@@ -647,11 +694,23 @@ day of that year (the last day's leader is the overall winner). Comparing precom
 across years is far less error-prone than comparing point totals by hand, which is where mistakes \
 happen.
 
-PENDING MATCHES - get_player_course_performance counts every match recorded at a course, including \
-ones with no result yet (see its `Pending` field), unlike get_matches/get_player_stats which only \
-count decided matches. When a course breakdown includes pending matches, say so explicitly (e.g. \
+PENDING MATCHES - several tools only count DECIDED (results-in) matches by default, and a short or \
+empty answer from them does NOT mean no matches exist:
+- get_matches defaults to status='decided'. Before ever telling an admin "there are no matches" for \
+a year/player/filter, or before answering a general "what matches are there" / "what's happening in \
+year X" question, call get_matches again with status='all' (or status='pending') to check for \
+scheduled-but-undecided matches, and mention them explicitly if found (e.g. "no decided matches yet \
+for 2026, but there are 4 pending: ..."). Never report "0 results" from the default decided-only call \
+as evidence that nothing has been scheduled.
+- get_player_course_performance and get_course_stats count every match recorded, including ones with \
+no result yet (see their `Pending` field), unlike get_matches/get_player_stats which only count \
+decided matches by default. When a course breakdown includes pending matches, say so explicitly (e.g. \
 "2-0 completed at Druids Heath, 1 match still pending") rather than treating the raw match count as \
 decided results - this matters for pairing decisions since only locked-in results are real signal.
+- get_year_summary and get_team_points_by_day only tally decided results into their point totals; a \
+year or day with only pending matches can show up looking like "0-0" or an unchanged/tied score rather \
+than "not yet played." If a year's summary looks suspiciously empty or tied at 0, cross-check with \
+get_matches (status='pending' or 'all') before reporting a final score or winner.
 
 SCOPE - the Fourball-only data above is for judging pairings. It is NOT the player's overall record. \
 If the admin asks a general question about a player (their record, how good they are, how they've been \
@@ -684,14 +743,19 @@ actual team from that year's roster, rejecting the match if partners aren't on t
 sides are the same team; relay any 'validation_failed' problems to the admin plainly and ask them to \
 clarify rather than retrying with a guess. If create_matches returns 'course_not_found', ask the admin \
 for that course's par, slope rating, and course rating, call create_course with those values, then retry \
-create_matches - never invent course data yourself. Every create_matches call also requires confirming \
-the course's details first: the first call (confirm_course_details omitted/false) creates nothing and \
-returns 'confirm_course_details' with the resolved course's current par/slope rating/course rating - read \
-those numbers back to the admin and ask them to confirm before proceeding, since they directly change the \
-handicaps this tool computes. If the admin says one is wrong, call update_course to fix it first (only \
-passing the field(s) that need to change), then retry create_matches with confirm_course_details=true. \
-Don't ask again if the admin already stated the course's numbers themselves earlier in the same exchange. \
-Never pass or estimate handicaps yourself; the tool computes them the same way the Add Match page does.
+create_matches - never invent course data yourself. Never pass or estimate handicaps yourself; the tool \
+computes them the same way the Add Match page does.
+
+CONFIRM BEFORE CREATING - create_matches NEVER creates anything on the first call. With confirm omitted/ \
+false, it validates everything and returns 'confirm_required' with a full preview: the course's par/slope \
+rating/course rating, and every proposed match's Blue vs Red players with their computed handicaps. Read \
+that whole preview back to the admin - list each match's actual pairings and handicaps, don't just say \
+"ready to create N matches" - and STOP: wait for their explicit go-ahead in a new message (e.g. "yes", \
+"looks good", "go ahead"). Only after that do you call create_matches again with confirm=true and the \
+exact same arguments. Never call it a second time with confirm=true in the same turn/response as the \
+first call - the admin must see the preview and reply before you proceed. If the admin flags something \
+wrong in the preview (a par/slope number, a pairing), fix the input (update_course, or correct the \
+matches list) and preview again rather than forcing confirm=true through unchanged.
 
 EDITING COURSES - update_course lets you fix a course's par, slope rating, or course rating directly from \
 a request like "update Druids Glen to slope 132" or "the par for Druids Glen is actually 72" - only pass \
@@ -715,6 +779,15 @@ For a FOURBALL result reported as a pairing vs pairing (e.g. "Jeff & Jordan beat
 fourball_side_a/fourball_side_b instead of player_a/player_b - never make two separate record_match_result \
 calls with individual names for a fourball result, since the tool expects player_a/player_b to be \
 opponents, not partners, so it won't find the match that way.
+
+CONFIRM BEFORE RECORDING - record_match_result NEVER writes anything on the first call once it has found \
+the one matching match. With confirm omitted/false, it returns 'confirm_required' with a preview of \
+exactly what would change - the match's year/day/course/players and the proposed result/score (or "reset \
+to pending" for outcome="clear") - and changes nothing. Read that back to the admin plainly (e.g. "I'll \
+record Jeff beat Conor 1UP for the Year 2026 Day 2 match at Druids Glen - confirm?") and STOP: wait for \
+their explicit go-ahead in a new message before calling record_match_result again with confirm=true and \
+the same arguments. Never call it a second time with confirm=true in the same turn/response as the first \
+call. This applies to every outcome, including outcome="clear".
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -846,9 +919,19 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 f"invalid match_type {match_type!r}; must be one of {list(VALID_MATCH_TYPES)} or omitted"
             )
 
+    @staticmethod
+    def _validate_status(status: Optional[str]) -> None:
+        if status is not None and status not in VALID_MATCH_STATUSES:
+            raise ValueError(
+                f"invalid status {status!r}; must be one of {list(VALID_MATCH_STATUSES)} or omitted"
+            )
+
     def _tool_get_matches(self, year: Optional[int] = None, match_type: Optional[str] = None,
-                           player: Optional[str] = None, opponent: Optional[str] = None) -> str:
+                           player: Optional[str] = None, opponent: Optional[str] = None,
+                           status: Optional[str] = None) -> str:
         self._validate_match_type(match_type)
+        self._validate_status(status)
+        status = status or "decided"
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({"matches": []})
@@ -867,7 +950,11 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 (df['BluePlayer1'] == opponent) | (df['BluePlayer2'] == opponent) |
                 (df['RedPlayer1'] == opponent) | (df['RedPlayer2'] == opponent)
             ]
-        df = df[df['Result'].notna() & (df['Result'] != '')]
+        if status == "decided":
+            df = df[df['Result'].notna() & (df['Result'] != '')]
+        elif status == "pending":
+            df = df[df['Result'].isna() | (df['Result'] == '')]
+        # status == "all": no filter
 
         cols = ['Year', 'Day', 'MatchNumber', 'Course', 'MatchType',
                 'BluePlayer1', 'BluePlayer2', 'RedPlayer1', 'RedPlayer2', 'Result', 'Score']
@@ -906,6 +993,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_course_stats(self) -> str:
         df = self.data_service.get_course_statistics()
+        if df is not None and not df.empty:
+            df = df.copy()
+            df['Pending'] = df['Matches'] - (df['Blue_Wins'] + df['Red_Wins'] + df['Halves'])
         return json.dumps({"courses": _df_records(df)}, default=_json_default)
 
     def _tool_get_player_course_performance(self, player: str) -> str:
@@ -960,6 +1050,21 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         except (TypeError, ValueError):
             pass
         return value
+
+    @staticmethod
+    def _clean_optional_str(value) -> Optional[str]:
+        """Normalize a possibly-NaN/empty DataFrame cell to None for display (e.g. a match's
+        current Result/Score before anything has been recorded). Plain `value or None` mishandles
+        NaN, which is truthy in Python, so this checks pd.isna explicitly like _clean_handicap."""
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+        text = str(value).strip()
+        return text or None
 
     @staticmethod
     def _claim_group_slot(name: str, available: list, used: list) -> bool:
@@ -1075,7 +1180,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         return json.dumps({"course": self.db_service.get_course(existing["name"])}, default=_json_default)
 
     def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None,
-                              confirm_course_details: bool = False) -> str:
+                              confirm: bool = False) -> str:
         year = int(year)
         day = int(day)
         matches = matches or []
@@ -1089,22 +1194,6 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 "message": f"No course matching {course!r} was found. Ask the admin for its par, "
                            f"slope rating, and course rating, then call create_course.",
             })
-
-        if not confirm_course_details:
-            return json.dumps({
-                "error": "confirm_course_details",
-                "course": {
-                    "name": course_info["name"], "par": course_info["par"],
-                    "slope_rating": course_info["slope_rating"], "course_rating": course_info["course_rating"],
-                },
-                "message": (
-                    f"Confirm with the admin that {course_info['name']}'s par ({course_info['par']}), "
-                    f"slope rating ({course_info['slope_rating']}), and course rating "
-                    f"({course_info['course_rating']}) are correct - these directly affect the computed "
-                    f"handicaps. If wrong, use update_course first. Once confirmed, call create_matches "
-                    f"again with confirm_course_details=true."
-                ),
-            }, default=_json_default)
 
         errors = []
         resolved_matches = []
@@ -1160,7 +1249,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         if errors:
             return json.dumps({"error": "validation_failed", "problems": errors})
 
-        created = []
+        # Compute handicaps once up front (pure calculation, no writes) so the confirmation
+        # preview and the actual write below operate on the exact same resolved plan.
+        planned = []
         for entry in resolved_matches:
             blue, red = entry["blue"], entry["red"]
             if entry["match_type"] == "Singles":
@@ -1180,6 +1271,40 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 )
                 blue_hcp, red_hcp = [p1_hcp, p2_hcp], [p3_hcp, p4_hcp]
 
+            planned.append({
+                "match_type": entry["match_type"],
+                "blue": blue, "blue_hcp": blue_hcp, "red": red, "red_hcp": red_hcp,
+                "blue_players": [{"name": p["name"], "handicap": h} for p, h in zip(blue, blue_hcp)],
+                "red_players": [{"name": p["name"], "handicap": h} for p, h in zip(red, red_hcp)],
+            })
+
+        if not confirm:
+            return json.dumps({
+                "error": "confirm_required",
+                "course": {
+                    "name": course_info["name"], "par": course_info["par"],
+                    "slope_rating": course_info["slope_rating"], "course_rating": course_info["course_rating"],
+                },
+                "matches": [
+                    {
+                        "match_type": p["match_type"],
+                        "blue_players": p["blue_players"], "red_players": p["red_players"],
+                    }
+                    for p in planned
+                ],
+                "message": (
+                    f"Nothing has been created yet. Read this preview back to the admin in full - "
+                    f"{len(planned)} match(es) for Year {year}, Day {day} at {course_info['name']} "
+                    f"(par {course_info['par']}, slope {course_info['slope_rating']}, course rating "
+                    f"{course_info['course_rating']}), listing each match's Blue vs Red players and "
+                    f"handicaps - and wait for their explicit go-ahead before calling create_matches "
+                    f"again with confirm=true."
+                ),
+            }, default=_json_default)
+
+        created = []
+        for entry in planned:
+            blue, blue_hcp, red, red_hcp = entry["blue"], entry["blue_hcp"], entry["red"], entry["red_hcp"]
             match_number = self.db_service.get_next_match_number(year, day)
             while self.db_service.check_match_exists(year, day, match_number):
                 match_number += 1
@@ -1203,12 +1328,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             created.append({
                 "year": year, "day": day, "match_number": match_number,
                 "course": course_info["name"], "match_type": entry["match_type"],
-                "blue_players": [
-                    {"name": p["name"], "handicap": h} for p, h in zip(blue, blue_hcp)
-                ],
-                "red_players": [
-                    {"name": p["name"], "handicap": h} for p, h in zip(red, red_hcp)
-                ],
+                "blue_players": entry["blue_players"], "red_players": entry["red_players"],
             })
 
         self.data_service.invalidate_cache()
@@ -1218,7 +1338,8 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                                    outcome: Optional[str] = None, score: Optional[str] = None,
                                    year: Optional[int] = None, day: Optional[int] = None,
                                    fourball_side_a: Optional[list] = None,
-                                   fourball_side_b: Optional[list] = None) -> str:
+                                   fourball_side_b: Optional[list] = None,
+                                   confirm: bool = False) -> str:
         if outcome not in ("player_a_won", "player_b_won", "half", "clear"):
             return json.dumps({"error": f"invalid outcome {outcome!r}"})
 
@@ -1355,6 +1476,32 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             if not ok:
                 error_type = "score_required" if not (score or "").strip() else "invalid_score"
                 return json.dumps({"error": error_type, "message": error_message})
+
+        current_blue = " & ".join(n for n in (row.get("BluePlayer1"), row.get("BluePlayer2")) if n)
+        current_red = " & ".join(n for n in (row.get("RedPlayer1"), row.get("RedPlayer2")) if n)
+
+        if not confirm:
+            proposed = (
+                "reset to pending (no result, no score)" if is_clear
+                else f"result={normalized_result!r}, score={normalized_score!r}"
+            )
+            return json.dumps({
+                "error": "confirm_required",
+                "match": {
+                    "year": match_year, "day": match_day, "match_number": match_number,
+                    "course": row["Course"], "match_type": row["MatchType"],
+                    "blue_players": current_blue, "red_players": current_red,
+                    "current_result": self._clean_optional_str(row.get("Result")),
+                    "current_score": self._clean_optional_str(row.get("Score")),
+                },
+                "proposed": proposed,
+                "message": (
+                    f"Nothing has been changed yet. Read this back to the admin - Year {match_year} Day "
+                    f"{match_day} at {row['Course']} ({current_blue} vs {current_red}) would be set to "
+                    f"{proposed} - and wait for their explicit go-ahead before calling record_match_result "
+                    f"again with confirm=true and the same arguments."
+                ),
+            }, default=_json_default)
 
         success = self.db_service.update_match_result(match_year, match_day, match_number,
                                                         normalized_result, normalized_score)
