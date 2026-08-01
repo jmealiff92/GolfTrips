@@ -1345,7 +1345,7 @@ def create_suggest_pairings_page():
             "based on individual performance, historical partner synergy, and handicaps. You can also just "
             "chat below and ask Captain Claude anything about the trip's matches, players, or courses - or "
             "tell it to create matches (e.g. \"create the 2026 day 2 matches at Druids Glen: Jeff & Jordan "
-            "vs Conor & Ian\") or record results (e.g. \"Jeff beat Conor 1up\").",
+            "vs Conor & Ian\") or record results (e.g. \"Player A beat Player B 1UP\").",
             className='text-muted', style={'textAlign': 'center', 'marginBottom': '30px'}
         ),
 
