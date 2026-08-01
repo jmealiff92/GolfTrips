@@ -2759,6 +2759,18 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
 # subprocess, via DiskcacheManager) since a tool-calling Claude exchange can take well past a
 # typical proxy/Gunicorn request timeout - this returns the initial HTTP response immediately and
 # lets the frontend poll for the result instead of holding one connection open for the whole call.
+#
+# Delivers its result via set_progress (progress=[...] below) rather than relying solely on the
+# normal return-value delivery. Dash's own post-return delivery writes the result to its job cache
+# only AFTER this function returns, and the very next poll independently checks "is the subprocess
+# still alive" (job_running) and "is there a result yet" (get_result) - if a poll lands in the gap
+# between the subprocess exiting and that write becoming visible to it, Dash concludes the job was
+# canceled and stops polling for good, even though the real answer was written a moment earlier.
+# set_progress writes to a separate cache key that every poll checks unconditionally, and we call
+# it here *before* returning (while the subprocess and job_running() are both still very much
+# alive), so the frontend picks up the reply on its next poll regardless of how that post-return
+# race resolves. progress_default=no_update keeps this from touching the outputs before the first
+# set_progress call or after the callback fully completes.
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
      Output('pairing-chat-component', 'messages', allow_duplicate=True)],
@@ -2766,8 +2778,11 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
     State('pairing-chat-component', 'messages'),
     prevent_initial_call=True,
     background=True,
+    progress=[Output('pairing-conversation-store', 'data', allow_duplicate=True),
+              Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    progress_default=[no_update, no_update],
 )
-def run_pairing_chat_message_background(trigger, messages):
+def run_pairing_chat_message_background(set_progress, trigger, messages):
     if not trigger:
         return no_update, no_update
 
@@ -2786,16 +2801,19 @@ def run_pairing_chat_message_background(trigger, messages):
             # after the tab was backgrounded/reloaded isn't lost, and shows up next time
             # update_pairing_roster loads this user's conversation for this year.
             db_service.save_pairing_chat_session(email, year, result['conversation'], messages)
+        set_progress((result['conversation'], messages))
         return result['conversation'], messages
     except PairingSuggestionError as e:
         logger.warning("Pairing chat failed (team=%s, year=%s): %s", team, year, e)
         messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ {e}"})
+        set_progress((no_update, messages))
         return no_update, messages
     except Exception as e:
         logger.exception("Unexpected error in pairing chat")
         messages.append({
             'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ Unexpected error: {e}",
         })
+        set_progress((no_update, messages))
         return no_update, messages
 
 
