@@ -3,12 +3,14 @@ Shared match-result score format used by both the manual Add/Edit Match UI
 (src/app.py) and Captain Claude's match-creation/result-recording chat tools
 (src/llm_pairing_service.py), so both paths enforce the same rule.
 
-Allowed score formats: "1UP".."99UP", "1&1".."99&99", "A/S" (halved), "Unknown".
+Allowed score formats: "1UP" or "2UP" (a match that goes to the 18th hole can only finish
+1 up or 2 up - any bigger margin would have been decided before the 18th and recorded as
+"X&Y" instead), "1&1".."99&99", "A/S" (halved), "Unknown".
 """
 import re
 from typing import Optional
 
-SCORE_PATTERN = re.compile(r'^\d{1,2}UP$|^\d{1,2}&\d{1,2}$|^A/S$|^Unknown$', re.IGNORECASE)
+SCORE_PATTERN = re.compile(r'^[12]UP$|^\d{1,2}&\d{1,2}$|^A/S$|^Unknown$', re.IGNORECASE)
 
 VALID_RESULTS = ('Blue', 'Red', 'Half', '')
 

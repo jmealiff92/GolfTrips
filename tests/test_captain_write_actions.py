@@ -19,10 +19,10 @@ from src.match_score import normalize_score, validate_result_score
 class TestMatchScore(unittest.TestCase):
     def test_valid_formats_normalize(self):
         self.assertEqual(normalize_score('1up'), '1UP')
+        self.assertEqual(normalize_score('2up'), '2UP')
         self.assertEqual(normalize_score('3&2'), '3&2')
         self.assertEqual(normalize_score('a/s'), 'A/S')
         self.assertEqual(normalize_score('unknown'), 'Unknown')
-        self.assertEqual(normalize_score('10UP'), '10UP')
         self.assertEqual(normalize_score('10&8'), '10&8')
 
     def test_invalid_formats_rejected(self):
@@ -31,6 +31,12 @@ class TestMatchScore(unittest.TestCase):
                 self.assertEqual(normalize_score(bad), '')
             else:
                 self.assertIsNone(normalize_score(bad), f"{bad!r} should be invalid")
+
+    def test_up_margin_capped_at_two(self):
+        # A match that reaches the 18th hole can only finish A/S, 1UP, or 2UP - anything
+        # more decisive would have closed out early and been recorded as "X&Y" instead.
+        for bad in ['3UP', '4UP', '10UP', '0UP']:
+            self.assertIsNone(normalize_score(bad), f"{bad!r} should be invalid")
 
     def test_half_forces_a_s(self):
         ok, result, score, err = validate_result_score('Half', 'anything')
