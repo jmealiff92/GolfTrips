@@ -50,7 +50,11 @@ def _df_records(df) -> list:
 
 def _serialize_content_blocks(blocks) -> list[dict]:
     """Anthropic SDK response content blocks -> plain JSON-safe dicts, for storing in dcc.Store
-    and replaying back to the API on the next turn."""
+    and replaying back to the API on the next turn. Every block type Claude can return in a
+    tool-calling turn must round-trip here - dropping any of them (e.g. thinking blocks) corrupts
+    the conversation's shape, and the next API call fails with a 400 'Input does not match the
+    expected shape' error, since extended thinking requires its thinking/redacted_thinking blocks
+    to be echoed back unmodified (signature included) alongside any tool_use in the same turn."""
     serialized = []
     for block in blocks:
         block_type = getattr(block, "type", None)
@@ -58,6 +62,10 @@ def _serialize_content_blocks(blocks) -> list[dict]:
             serialized.append({"type": "text", "text": block.text})
         elif block_type == "tool_use":
             serialized.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+        elif block_type == "thinking":
+            serialized.append({"type": "thinking", "thinking": block.thinking, "signature": block.signature})
+        elif block_type == "redacted_thinking":
+            serialized.append({"type": "redacted_thinking", "data": block.data})
     return serialized
 
 

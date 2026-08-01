@@ -7,7 +7,7 @@ import anthropic
 import httpx
 import pandas as pd
 
-from src.llm_pairing_service import PairingSuggester, PairingSuggestionError
+from src.llm_pairing_service import PairingSuggester, PairingSuggestionError, _serialize_content_blocks
 
 
 class FakeTextBlock:
@@ -27,6 +27,19 @@ class FakeToolUseBlock:
         self.id = tool_id
         self.name = name
         self.input = input_
+
+
+class FakeThinkingBlock:
+    def __init__(self, thinking='reasoning...', signature='sig123'):
+        self.type = 'thinking'
+        self.thinking = thinking
+        self.signature = signature
+
+
+class FakeRedactedThinkingBlock:
+    def __init__(self, data='redacted-data'):
+        self.type = 'redacted_thinking'
+        self.data = data
 
 
 class FakeMessage:
@@ -53,6 +66,39 @@ def _stream_client(final_messages=None, error=None):
     else:
         entered.get_final_message.return_value = final_messages
     return fake_client
+
+
+class TestSerializeContentBlocks(unittest.TestCase):
+    """_serialize_content_blocks must round-trip every block type Claude can return in a
+    tool-calling turn - silently dropping one (e.g. thinking blocks) corrupts the conversation
+    shape and breaks the next API call with a 400 error."""
+
+    def test_preserves_text_and_tool_use_blocks(self):
+        blocks = [FakeTextBlock('hello'), FakeToolUseBlock('id1', 'get_matches', {'player': 'Alice'})]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [
+            {'type': 'text', 'text': 'hello'},
+            {'type': 'tool_use', 'id': 'id1', 'name': 'get_matches', 'input': {'player': 'Alice'}},
+        ])
+
+    def test_preserves_thinking_block_with_signature(self):
+        blocks = [FakeThinkingBlock(thinking='reasoning through it', signature='sig-xyz')]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [{'type': 'thinking', 'thinking': 'reasoning through it', 'signature': 'sig-xyz'}])
+
+    def test_preserves_redacted_thinking_block(self):
+        blocks = [FakeRedactedThinkingBlock(data='opaque-data')]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [{'type': 'redacted_thinking', 'data': 'opaque-data'}])
+
+    def test_preserves_mixed_thinking_and_tool_use_in_order(self):
+        blocks = [
+            FakeThinkingBlock(thinking='step 1', signature='sig-1'),
+            FakeToolUseBlock('id2', 'get_player_stats', {'player': 'Bob'}),
+        ]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result[0]['type'], 'thinking')
+        self.assertEqual(result[1]['type'], 'tool_use')
 
 
 class TestPairingSuggester(unittest.TestCase):
@@ -461,6 +507,34 @@ class TestPairingSuggesterTools(unittest.TestCase):
         tool_result_content = tool_result_turn['content'][0]['content']
         self.assertIn('3&2', tool_result_content)
         self.assertIn('Alice', tool_result_content)
+
+    def test_tool_use_turn_preserves_thinking_block_in_stored_conversation(self):
+        """A thinking block alongside tool_use must survive into the stored conversation -
+        dropping it corrupts the shape Anthropic's API expects on the next turn (extended
+        thinking requires thinking blocks to be echoed back unmodified, signature included)."""
+        suggester = self._suggester()
+        tool_call = FakeMessage(
+            content=[
+                FakeThinkingBlock(thinking='Let me check Alice\'s matches', signature='sig-abc'),
+                FakeToolUseBlock('tool_1', 'get_matches', {'player': 'Alice'}),
+            ],
+            stop_reason='tool_use',
+        )
+        final = FakeMessage("Alice won 3&2 on day 1 - not especially tight.")
+        fake_client = _stream_client([tool_call, final])
+
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Was Alice's win tight?"
+            )
+
+        assistant_turn = result['conversation'][-3]
+        self.assertEqual(assistant_turn['role'], 'assistant')
+        block_types = [b['type'] for b in assistant_turn['content']]
+        self.assertIn('thinking', block_types)
+        thinking_block = next(b for b in assistant_turn['content'] if b['type'] == 'thinking')
+        self.assertEqual(thinking_block['thinking'], 'Let me check Alice\'s matches')
+        self.assertEqual(thinking_block['signature'], 'sig-abc')
 
     def test_unrecognized_tool_reports_error_without_crashing_the_loop(self):
         suggester = self._suggester()
