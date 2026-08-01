@@ -57,7 +57,7 @@ def main():
     try:
         # Test singles calculation
         handicaps = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=10.0,
             handicap_index_p2=None,
             handicap_index_p3=15.0,

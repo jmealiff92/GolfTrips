@@ -210,7 +210,7 @@ class TestMatchCreationWithAutoCalculation(unittest.TestCase):
 
         # Calculate handicaps
         handicaps = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=p1_index,
             handicap_index_p2=None,
             handicap_index_p3=p2_index,
@@ -222,7 +222,7 @@ class TestMatchCreationWithAutoCalculation(unittest.TestCase):
         # Add match with calculated handicaps
         success = self.db_service.add_match(
             year=2024, day=1, match_number=1,
-            course="Test Course", match_type="Single",
+            course="Test Course", match_type="Singles",
             blue_player1="Player A", blue_player1_handicap=handicaps[0],
             blue_player2=None, blue_player2_handicap=None,
             red_player1="Player B", red_player1_handicap=handicaps[1],
@@ -306,7 +306,7 @@ class TestMatchEditFunctionality(unittest.TestCase):
         # Add a match without result
         self.db_service.add_match(
             year=2024, day=1, match_number=1,
-            course="Test Course", match_type="Single",
+            course="Test Course", match_type="Singles",
             blue_player1="Player 1", blue_player1_handicap=0,
             blue_player2=None, blue_player2_handicap=None,
             red_player1="Player 2", red_player1_handicap=5,
@@ -402,7 +402,7 @@ class TestEndToEndWorkflow(unittest.TestCase):
         phil_index = self.db_service.get_player_handicap("Phil Mickelson", 2024)
 
         handicaps = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=tiger_index,
             handicap_index_p2=None,
             handicap_index_p3=phil_index,
@@ -414,7 +414,7 @@ class TestEndToEndWorkflow(unittest.TestCase):
         # Step 4: Create match
         success = self.db_service.add_match(
             year=2024, day=1, match_number=1,
-            course="Augusta National", match_type="Single",
+            course="Augusta National", match_type="Singles",
             blue_player1="Tiger Woods", blue_player1_handicap=handicaps[0],
             blue_player2=None, blue_player2_handicap=None,
             red_player1="Phil Mickelson", red_player1_handicap=handicaps[1],

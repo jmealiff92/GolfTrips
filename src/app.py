@@ -626,7 +626,7 @@ def create_team_summary_page():
                 {'name': 'Win %', 'id': 'Win %'},
                 {'name': 'PPG', 'id': 'PPG'}
             ],
-            data=data_service.get_player_performance_all_players('Single').to_dict('records'),
+            data=data_service.get_player_performance_all_players('Singles').to_dict('records'),
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left', 'padding': '10px'},
             style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
@@ -824,10 +824,10 @@ def create_add_match_page():
                         dcc.Dropdown(
                             id='input-match-type',
                             options=[
-                                {'label': 'Single', 'value': 'Single'},
+                                {'label': 'Singles', 'value': 'Singles'},
                                 {'label': 'Fourball', 'value': 'Fourball'}
                             ],
-                            value='Single',
+                            value='Singles',
                             clearable=False
                         )
                     ], width=6),
@@ -1577,7 +1577,7 @@ def display_page(pathname):
     Input('input-match-type', 'value')
 )
 def toggle_player2_fields(match_type):
-    if match_type == 'Single':
+    if match_type == 'Singles':
         return {'display': 'none'}, {'display': 'none'}
     return {'display': 'block'}, {'display': 'block'}
 
@@ -1670,10 +1670,10 @@ def auto_calculate_handicaps(year, course, match_type, blue_p1, blue_p2, red_p1,
         if blue_p1_index is None or red_p1_index is None:
             return 0, 0, 0, 0
 
-        if match_type == 'Single':
+        if match_type == 'Singles':
             # Calculate for singles
             handicaps = HandicapCalculator.calculate_match_handicaps(
-                match_type='Single',
+                match_type='Singles',
                 handicap_index_p1=blue_p1_index,
                 handicap_index_p2=None,
                 handicap_index_p3=red_p1_index,
@@ -1765,7 +1765,7 @@ def add_match(n_clicks, year, day, match_number, course, new_course, match_type,
         course = new_course
 
     # For singles, ignore player 2 fields
-    if match_type == 'Single':
+    if match_type == 'Singles':
         blue_p2 = None
         blue_p2_hcp = None
         red_p2 = None
@@ -2802,9 +2802,9 @@ def _recompute_match_handicaps(year, course_name, match_type, blue_p1, blue_p2, 
     if blue_p1_index is None or red_p1_index is None:
         return None
 
-    if match_type == 'Single':
+    if match_type == 'Singles':
         handicaps = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=blue_p1_index, handicap_index_p2=None,
             handicap_index_p3=red_p1_index, handicap_index_p4=None,
             slope_rating=course_info['slope_rating'], par=course_info['par']

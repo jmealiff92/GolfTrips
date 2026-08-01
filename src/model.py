@@ -14,7 +14,7 @@ class Course:
     slope_rating: float
 
 @dataclass
-class SingleMatch:
+class SinglesMatch:
     player1: Player
     player2: Player
     player1Handicap: int
