@@ -1420,7 +1420,15 @@ def create_suggest_pairings_page():
 
         dbc.Card([
             dbc.CardBody([
-                html.H4("Chat with Captain Claude", className='mb-3'),
+                dbc.Row([
+                    dbc.Col(html.H4("Chat with Captain Claude", className='mb-0'), width='auto'),
+                    dbc.Col(
+                        dbc.Button(
+                            "Clear Chat", id='btn-clear-pairing-chat', color='danger', outline=True, size='sm'
+                        ),
+                        width='auto', className='ms-auto'
+                    ),
+                ], className='mb-3 align-items-center'),
                 html.P(
                     "Ask about these players, propose your own pairing and get feedback, ask any "
                     "open-ended stats question, or tell Captain Claude to create matches or record "
@@ -2558,6 +2566,25 @@ def update_pairing_roster(year, team):
     if cached:
         return options, [], cached.get('conversation'), cached.get('messages', []), None, None
     return options, [], None, [], None, None
+
+
+# Clear the on-screen chat and drop its persisted backup for this year, so it doesn't come back
+# on the next page load/reconnect (see pairing_chat_cache above).
+@app.callback(
+    [Output('pairing-conversation-store', 'data', allow_duplicate=True),
+     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    Input('btn-clear-pairing-chat', 'n_clicks'),
+    State('pairing-year-filter', 'value'),
+    prevent_initial_call=True,
+)
+def clear_pairing_chat(n_clicks, year):
+    if not n_clicks:
+        return no_update, no_update
+
+    email = get_current_user_email()
+    if email and year:
+        pairing_chat_cache.pop((email, year), None)
+    return None, []
 
 
 # Enable/disable the Suggest Pairings button based on the selected player count
