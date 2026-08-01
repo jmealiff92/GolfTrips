@@ -118,9 +118,24 @@ class CaptainWriteActionsTestCase(unittest.TestCase):
 
 
 class TestCreateMatches(CaptainWriteActionsTestCase):
-    def test_singles_happy_path(self):
+    def test_first_call_asks_to_confirm_course_details(self):
         payload = self._execute('create_matches', {
             'year': self.YEAR, 'day': 2, 'course': 'druids glen',
+            'matches': [{
+                'match_type': 'Singles',
+                'side_a_players': ['Jeff Smith'],
+                'side_b_players': ['Conor Byrne'],
+            }],
+        })
+        self.assertEqual(payload.get('error'), 'confirm_course_details')
+        self.assertEqual(payload['course']['name'], 'Druids Glen')
+        self.assertEqual(payload['course']['par'], 71)
+        self.assertEqual(payload['course']['slope_rating'], 128)
+        self.assertEqual(len(self.db_service.get_matches_by_year(self.YEAR)), 0)
+
+    def test_singles_happy_path(self):
+        payload = self._execute('create_matches', {
+            'year': self.YEAR, 'day': 2, 'course': 'druids glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -147,7 +162,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_fourball_happy_path_partial_name_match(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Fourball',
                 'side_a_players': ['Jeff', 'Jordan'],
@@ -164,7 +179,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_two_matches_batched_get_sequential_match_numbers(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Conor Byrne']},
                 {'match_type': 'Singles', 'side_a_players': ['Jordan Lee'], 'side_b_players': ['Ian Doyle']},
@@ -175,7 +190,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_team_color_mismatch_within_side_rejected(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Fourball',
                 'side_a_players': ['Jeff Smith', 'Conor Byrne'],
@@ -187,7 +202,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_same_team_both_sides_rejected(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -199,7 +214,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_unresolvable_player_name(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Nobody Here'],
@@ -214,7 +229,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
         self.db_service.add_or_update_handicap('Jeffrey Jones', self.YEAR, 18.0)
 
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff'],
@@ -227,7 +242,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
     def test_missing_handicap_blocks_creation(self):
         self.db_service.assign_player_team('No Handicap Guy', self.YEAR, 'Red')
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -239,7 +254,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_unknown_course_returns_course_not_found(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Nonexistent Links',
+            'year': self.YEAR, 'day': 2, 'course': 'Nonexistent Links', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -250,7 +265,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_batch_is_atomic_one_bad_match_creates_nothing(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Conor Byrne']},
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Jordan Lee']},
@@ -266,7 +281,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
         self.assertIn('course', create_payload)
 
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'New Links',
+            'year': self.YEAR, 'day': 2, 'course': 'New Links', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -281,6 +296,44 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
             'name': 'druids glen', 'par': 72, 'slope_rating': 130, 'course_rating': 72.5,
         })
         self.assertIn('error', payload)
+
+
+class TestUpdateCourse(CaptainWriteActionsTestCase):
+    def test_update_single_field_leaves_others_unchanged(self):
+        payload = self._execute('update_course', {'name': 'druids glen', 'slope_rating': 132})
+        self.assertIn('course', payload)
+        self.assertEqual(payload['course']['slope_rating'], 132)
+        self.assertEqual(payload['course']['par'], 71)
+        self.assertEqual(payload['course']['course_rating'], 71.5)
+
+    def test_update_multiple_fields(self):
+        payload = self._execute('update_course', {
+            'name': 'Druids Glen', 'par': 72, 'course_rating': 72.5,
+        })
+        self.assertEqual(payload['course']['par'], 72)
+        self.assertEqual(payload['course']['course_rating'], 72.5)
+        self.assertEqual(payload['course']['slope_rating'], 128)  # unchanged
+
+    def test_no_fields_given_rejected(self):
+        payload = self._execute('update_course', {'name': 'Druids Glen'})
+        self.assertIn('error', payload)
+        matches = self.db_service.get_course('Druids Glen')
+        self.assertEqual(matches['slope_rating'], 128)  # unchanged
+
+    def test_unknown_course_rejected(self):
+        payload = self._execute('update_course', {'name': 'Nonexistent Links', 'par': 72})
+        self.assertEqual(payload.get('error'), 'not_found')
+
+    def test_ambiguous_course_name_rejected(self):
+        self.db_service.add_course('Druids Heath', 70, 125, 70.0)
+        payload = self._execute('update_course', {'name': 'Druids', 'par': 72})
+        self.assertEqual(payload.get('error'), 'ambiguous')
+
+    def test_partial_name_match_updates_correct_course(self):
+        payload = self._execute('update_course', {'name': 'Glen', 'par': 70})
+        self.assertIn('course', payload)
+        self.assertEqual(payload['course']['name'], 'Druids Glen')
+        self.assertEqual(payload['course']['par'], 70)
 
 
 class TestRecordMatchResult(CaptainWriteActionsTestCase):

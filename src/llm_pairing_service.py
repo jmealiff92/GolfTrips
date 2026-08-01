@@ -273,7 +273,15 @@ class PairingSuggester:
                 "with those, then retry create_matches. If it returns 'validation_failed', relay the "
                 "listed problems to the admin and ask them to clarify rather than guessing. Handicaps "
                 "are computed automatically the same way the Add Match page does - never pass or ask "
-                "for them yourself."
+                "for them yourself, using whatever par/slope rating/course rating is on file for the "
+                "resolved course. Because those values directly affect the handicaps this tool computes, "
+                "every call must be confirmed: the first call (with confirm_course_details omitted or "
+                "false) creates nothing and instead returns 'confirm_course_details' with the resolved "
+                "course's current par/slope rating/course rating - read those numbers back to the admin "
+                "and ask them to confirm they're correct (or use update_course first if they're wrong), "
+                "then call create_matches again with confirm_course_details=true and the same arguments "
+                "to actually create the matches. Skip asking again within the same request only if the "
+                "admin already stated the course's par/slope/rating themselves in this exchange."
             ),
             "input_schema": {
                 "type": "object",
@@ -300,6 +308,14 @@ class PairingSuggester:
                             "required": ["match_type", "side_a_players", "side_b_players"],
                         },
                     },
+                    "confirm_course_details": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true only on a second call, after the admin has confirmed the course's "
+                            "par/slope rating/course rating (returned by the first call) are correct. "
+                            "Omit or leave false on the first attempt."
+                        ),
+                    },
                 },
                 "required": ["year", "day", "course", "matches"],
             },
@@ -321,6 +337,28 @@ class PairingSuggester:
                     "course_rating": {"type": "number"},
                 },
                 "required": ["name", "par", "slope_rating", "course_rating"],
+            },
+        },
+        {
+            "name": "update_course",
+            "description": (
+                "Update an existing course's par, slope rating, and/or course rating - e.g. 'update "
+                "Druids Glen to slope 132' or 'the par for Druids Glen is actually 72, not 71'. Resolves "
+                "`name` the same way create_matches does (case-insensitive, unambiguous partial match); "
+                "if it can't find exactly one matching course it returns an error rather than guessing. "
+                "Only pass the field(s) the admin actually wants changed - any field you omit keeps its "
+                "current stored value, so you don't need to ask for or restate values that aren't "
+                "changing. Never guess a new value the admin didn't state."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "par": {"type": "integer", "description": "Omit to leave par unchanged."},
+                    "slope_rating": {"type": "number", "description": "Omit to leave slope rating unchanged."},
+                    "course_rating": {"type": "number", "description": "Omit to leave course rating unchanged."},
+                },
+                "required": ["name"],
             },
         },
         {
@@ -616,8 +654,19 @@ actual team from that year's roster, rejecting the match if partners aren't on t
 sides are the same team; relay any 'validation_failed' problems to the admin plainly and ask them to \
 clarify rather than retrying with a guess. If create_matches returns 'course_not_found', ask the admin \
 for that course's par, slope rating, and course rating, call create_course with those values, then retry \
-create_matches - never invent course data yourself. Never pass or estimate handicaps yourself; the tool \
-computes them the same way the Add Match page does.
+create_matches - never invent course data yourself. Every create_matches call also requires confirming \
+the course's details first: the first call (confirm_course_details omitted/false) creates nothing and \
+returns 'confirm_course_details' with the resolved course's current par/slope rating/course rating - read \
+those numbers back to the admin and ask them to confirm before proceeding, since they directly change the \
+handicaps this tool computes. If the admin says one is wrong, call update_course to fix it first (only \
+passing the field(s) that need to change), then retry create_matches with confirm_course_details=true. \
+Don't ask again if the admin already stated the course's numbers themselves earlier in the same exchange. \
+Never pass or estimate handicaps yourself; the tool computes them the same way the Add Match page does.
+
+EDITING COURSES - update_course lets you fix a course's par, slope rating, or course rating directly from \
+a request like "update Druids Glen to slope 132" or "the par for Druids Glen is actually 72" - only pass \
+the field(s) the admin is actually changing, everything else stays as-is. Never guess a new value; if the \
+admin flags something as wrong without saying what it should be, ask for the correct number.
 
 RECORDING MATCH RESULTS - you can record a result directly with record_match_result, e.g. from "Jeff \
 beat Conor 1up" or "Ian lost to Jordan 1 down". Work out who actually won before calling: always express \
@@ -740,6 +789,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_all_players": self._tool_get_all_players,
             "create_matches": self._tool_create_matches,
             "create_course": self._tool_create_course,
+            "update_course": self._tool_update_course,
             "record_match_result": self._tool_record_match_result,
         }
         handler = handlers.get(name)
@@ -952,7 +1002,29 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             return json.dumps({"error": f"failed to create course {name!r}"})
         return json.dumps({"course": self.db_service.get_course(name.strip())}, default=_json_default)
 
-    def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None) -> str:
+    def _tool_update_course(self, name: str, par: Optional[int] = None,
+                             slope_rating: Optional[float] = None,
+                             course_rating: Optional[float] = None) -> str:
+        existing = self._resolve_course(name)
+        if "error" in existing:
+            return json.dumps(existing)
+
+        if par is None and slope_rating is None and course_rating is None:
+            return json.dumps({
+                "error": "no changes given - specify par, slope_rating, and/or course_rating",
+            })
+
+        new_par = int(par) if par is not None else existing["par"]
+        new_slope = float(slope_rating) if slope_rating is not None else existing["slope_rating"]
+        new_rating = float(course_rating) if course_rating is not None else existing["course_rating"]
+
+        ok = self.db_service.update_course(existing["name"], new_par, new_slope, new_rating)
+        if not ok:
+            return json.dumps({"error": f"failed to update course {existing['name']!r}"})
+        return json.dumps({"course": self.db_service.get_course(existing["name"])}, default=_json_default)
+
+    def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None,
+                              confirm_course_details: bool = False) -> str:
         year = int(year)
         day = int(day)
         matches = matches or []
@@ -966,6 +1038,22 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 "message": f"No course matching {course!r} was found. Ask the admin for its par, "
                            f"slope rating, and course rating, then call create_course.",
             })
+
+        if not confirm_course_details:
+            return json.dumps({
+                "error": "confirm_course_details",
+                "course": {
+                    "name": course_info["name"], "par": course_info["par"],
+                    "slope_rating": course_info["slope_rating"], "course_rating": course_info["course_rating"],
+                },
+                "message": (
+                    f"Confirm with the admin that {course_info['name']}'s par ({course_info['par']}), "
+                    f"slope rating ({course_info['slope_rating']}), and course rating "
+                    f"({course_info['course_rating']}) are correct - these directly affect the computed "
+                    f"handicaps. If wrong, use update_course first. Once confirmed, call create_matches "
+                    f"again with confirm_course_details=true."
+                ),
+            }, default=_json_default)
 
         errors = []
         resolved_matches = []
