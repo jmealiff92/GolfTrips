@@ -157,6 +157,14 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertIn('does NOT mean no matches exist', prompt)
         self.assertIn("status='all'", prompt)
 
+    def test_prompt_instructs_parsing_messy_pasted_match_data(self):
+        suggester = self._suggester()
+        prompt = suggester._build_suggestion_prompt('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('PARSING PASTED MATCH DATA', prompt)
+        self.assertIn('Jeff Mealiff', prompt)
+        self.assertIn('POSITIONALLY', prompt)
+        self.assertIn('NOT a handicap and NOT a score', prompt)
+
     # ---- response parsing/validation ----
 
     def test_successful_response_parsed_into_pairings(self):
