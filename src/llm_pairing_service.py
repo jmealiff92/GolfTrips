@@ -342,7 +342,12 @@ class PairingSuggester:
                 "for the one pending (not yet decided) match where these two players are on opposite "
                 "sides; if it finds none ('no_pending_match') or more than one ('ambiguous_match'), it "
                 "returns what it found so you can ask the admin to confirm the match (e.g. by year/day) "
-                "rather than guessing."
+                "rather than guessing. To undo a result that was recorded incorrectly (e.g. 'clear the "
+                "result for Jeff vs Conor', 'that was wrong, they haven't played yet'), call this with "
+                "outcome='clear' - it searches decided (non-pending) matches instead of pending ones for "
+                "these two players, resets the match back to pending (no result, no score), and you don't "
+                "need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies if it "
+                "can't find exactly one match to clear."
             ),
             "input_schema": {
                 "type": "object",
@@ -350,8 +355,11 @@ class PairingSuggester:
                     "player_a": {"type": "string"},
                     "player_b": {"type": "string"},
                     "outcome": {
-                        "type": "string", "enum": ["player_a_won", "player_b_won", "half"],
-                        "description": "Which player won, or 'half' if the match was halved.",
+                        "type": "string", "enum": ["player_a_won", "player_b_won", "half", "clear"],
+                        "description": (
+                            "Which player won, 'half' if the match was halved, or 'clear' to undo an "
+                            "incorrectly-recorded result and reset the match back to pending."
+                        ),
                     },
                     "score": {
                         "type": "string",
@@ -620,7 +628,10 @@ can't provide one, call again with score="Unknown". Halved matches are automatic
 "A/S", you don't need to supply one for outcome="half". If the admin didn't mention a year or day, omit \
 them and let the tool search for the one pending match between the two named players; if it comes back \
 'no_pending_match' or 'ambiguous_match', tell the admin what you found (or didn't) and ask them to \
-confirm the match/year/day rather than guessing which one they mean or silently picking the first result.
+confirm the match/year/day rather than guessing which one they mean or silently picking the first result. \
+If the admin says a result was entered wrong and wants it undone (e.g. "clear that result", "they haven't \
+actually played yet", "I recorded that incorrectly"), call record_match_result with outcome="clear" for \
+the two players - it resets the match back to pending (no result, no score) and you don't need a `score`.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -1067,7 +1078,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
     def _tool_record_match_result(self, player_a: str, player_b: str, outcome: str,
                                    score: Optional[str] = None, year: Optional[int] = None,
                                    day: Optional[int] = None) -> str:
-        if outcome not in ("player_a_won", "player_b_won", "half"):
+        if outcome not in ("player_a_won", "player_b_won", "half", "clear"):
             return json.dumps({"error": f"invalid outcome {outcome!r}"})
 
         df = self.data_service.df
@@ -1077,11 +1088,15 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 "message": "There are no matches recorded at all.",
             })
 
-        pending = df[df["Result"].isna() | (df["Result"] == "")]
+        is_clear = outcome == "clear"
+        if is_clear:
+            subset = df[df["Result"].notna() & (df["Result"] != "")]
+        else:
+            subset = df[df["Result"].isna() | (df["Result"] == "")]
         if year is not None:
-            pending = pending[pending["Year"] == int(year)]
+            subset = subset[subset["Year"] == int(year)]
         if day is not None:
-            pending = pending[pending["Day"] == int(day)]
+            subset = subset[subset["Day"] == int(day)]
 
         def _side_of(row, name):
             query = (name or "").strip().lower()
@@ -1099,18 +1114,20 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             return None
 
         candidates = []
-        for _, row in pending.iterrows():
+        for _, row in subset.iterrows():
             side_a = _side_of(row, player_a)
             side_b = _side_of(row, player_b)
             if side_a and side_b and side_a != side_b:
                 candidates.append(row)
 
         if not candidates:
+            error_type = "no_result_to_clear" if is_clear else "no_pending_match"
+            verb = "decided (non-pending)" if is_clear else "pending"
             return json.dumps({
-                "error": "no_pending_match", "player_a": player_a, "player_b": player_b,
+                "error": error_type, "player_a": player_a, "player_b": player_b,
                 "year": year, "day": day,
                 "message": (
-                    f"No pending match found where {player_a} and {player_b} are on opposite sides"
+                    f"No {verb} match found where {player_a} and {player_b} are on opposite sides"
                     + (f" for {year} day {day}" if year and day else "")
                     + ". Ask the admin to confirm the year/day, or the player names."
                 ),
@@ -1126,24 +1143,27 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                     }
                     for row in candidates
                 ],
-                "message": "More than one pending match matches these players - ask the admin which one (or for year/day).",
+                "message": "More than one matching match found - ask the admin which one (or for year/day).",
             }, default=_json_default)
 
         row = candidates[0]
         match_year, match_day, match_number = int(row["Year"]), int(row["Day"]), int(row["MatchNumber"])
         side_a, side_b = _side_of(row, player_a), _side_of(row, player_b)
 
-        if outcome == "half":
-            result = "Half"
-        elif outcome == "player_a_won":
-            result = side_a
+        if is_clear:
+            normalized_result, normalized_score = "", ""
         else:
-            result = side_b
+            if outcome == "half":
+                result = "Half"
+            elif outcome == "player_a_won":
+                result = side_a
+            else:
+                result = side_b
 
-        ok, normalized_result, normalized_score, error_message = validate_result_score(result, score)
-        if not ok:
-            error_type = "score_required" if not (score or "").strip() else "invalid_score"
-            return json.dumps({"error": error_type, "message": error_message})
+            ok, normalized_result, normalized_score, error_message = validate_result_score(result, score)
+            if not ok:
+                error_type = "score_required" if not (score or "").strip() else "invalid_score"
+                return json.dumps({"error": error_type, "message": error_message})
 
         success = self.db_service.update_match_result(match_year, match_day, match_number,
                                                         normalized_result, normalized_score)

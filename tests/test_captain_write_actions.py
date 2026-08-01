@@ -50,9 +50,13 @@ class TestMatchScore(unittest.TestCase):
         self.assertEqual(result, '')
         self.assertEqual(score, '')
 
-    def test_blank_result_with_score_rejected(self):
+    def test_blank_result_auto_clears_stray_score(self):
+        # Clearing a result back to pending should silently drop any leftover score text,
+        # the same way Half forces the score to 'A/S' regardless of what was passed.
         ok, result, score, err = validate_result_score('', '1UP')
-        self.assertFalse(ok)
+        self.assertTrue(ok)
+        self.assertEqual(result, '')
+        self.assertEqual(score, '')
 
     def test_decided_result_requires_score(self):
         ok, result, score, err = validate_result_score('Blue', '')
@@ -384,6 +388,74 @@ class TestRecordMatchResult(CaptainWriteActionsTestCase):
         # the 2025 match should remain untouched/pending
         other = self.db_service.get_matches_by_year(2025).iloc[0]
         self.assertEqual(other['Result'], '')
+
+
+class TestClearMatchResult(CaptainWriteActionsTestCase):
+    """outcome='clear' - undoing an incorrectly-recorded result back to pending."""
+
+    def _add_decided_match(self, year, day, match_number=1, match_type='Singles',
+                            blue='Jeff Smith', red='Conor Byrne', result='Blue', score='1UP'):
+        self.db_service.add_match(
+            year=year, day=day, match_number=match_number,
+            course='Druids Glen', match_type=match_type,
+            blue_player1=blue, blue_player1_handicap=0,
+            blue_player2=None, blue_player2_handicap=None,
+            red_player1=red, red_player1_handicap=0,
+            red_player2=None, red_player2_handicap=None,
+            result=result, score=score,
+        )
+        self.data_service.invalidate_cache()
+
+    def test_clear_resets_decided_match_to_pending(self):
+        self._add_decided_match(self.YEAR, 2, result='Blue', score='1UP')
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith', 'player_b': 'Conor Byrne', 'outcome': 'clear',
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['result'], '')
+        self.assertEqual(payload['updated']['score'], '')
+
+        row = self.db_service.get_matches_by_year(self.YEAR).iloc[0]
+        self.assertEqual(row['Result'], '')
+        self.assertEqual(row['Score'], '')
+
+    def test_clear_works_on_half_result_too(self):
+        self._add_decided_match(self.YEAR, 2, result='Half', score='A/S')
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith', 'player_b': 'Conor Byrne', 'outcome': 'clear',
+        })
+        self.assertIn('updated', payload)
+        row = self.db_service.get_matches_by_year(self.YEAR).iloc[0]
+        self.assertEqual(row['Result'], '')
+
+    def test_clear_ignores_pending_matches(self):
+        self._add_decided_match(self.YEAR, 2, result='', score='')  # already pending, nothing to clear
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith', 'player_b': 'Conor Byrne', 'outcome': 'clear',
+        })
+        self.assertEqual(payload.get('error'), 'no_result_to_clear')
+
+    def test_clear_ambiguous_across_multiple_decided_matches(self):
+        self._add_decided_match(2025, 1, match_number=1)
+        self._add_decided_match(2026, 2, match_number=1)
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith', 'player_b': 'Conor Byrne', 'outcome': 'clear',
+        })
+        self.assertEqual(payload.get('error'), 'ambiguous_match')
+        self.assertEqual(len(payload['candidates']), 2)
+
+    def test_clear_disambiguated_by_year_day(self):
+        self._add_decided_match(2025, 1, match_number=1)
+        self._add_decided_match(2026, 2, match_number=1)
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith', 'player_b': 'Conor Byrne', 'outcome': 'clear',
+            'year': 2026, 'day': 2,
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['year'], 2026)
+
+        other = self.db_service.get_matches_by_year(2025).iloc[0]
+        self.assertEqual(other['Result'], 'Blue')  # untouched
 
 
 if __name__ == '__main__':

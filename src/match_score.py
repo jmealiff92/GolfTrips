@@ -36,7 +36,9 @@ def validate_result_score(result: Optional[str], score: Optional[str]) -> tuple[
 
     Returns (ok, normalized_result, normalized_score, error_message).
     - Half always forces score to 'A/S', regardless of what was passed.
-    - A blank score is only valid when result is also blank (pending).
+    - A blank result (clearing a match back to pending) always forces score blank too,
+      regardless of what was passed - so clearing a result doesn't also require clearing
+      whatever stray text was left in the score field.
     - A non-blank result (Blue/Red) requires a score matching SCORE_PATTERN,
       e.g. '3&2', '1UP', or 'Unknown'.
     """
@@ -49,18 +51,14 @@ def validate_result_score(result: Optional[str], score: Optional[str]) -> tuple[
     if result == 'Half':
         return True, result, 'A/S', ''
 
+    if not result:
+        return True, result, '', ''
+
     normalized_score = normalize_score(score)
     if normalized_score is None:
         return False, result, score or '', (
             f"Invalid score {score!r}; allowed formats are e.g. '3&2', '1UP', 'A/S', or 'Unknown'."
         )
-
-    if not result:
-        if normalized_score:
-            return False, result, normalized_score, (
-                "A score can't be recorded without a result (Blue/Red/Half)."
-            )
-        return True, result, '', ''
 
     if not normalized_score:
         return False, result, normalized_score, "A score is required once a result (Blue/Red) is set."

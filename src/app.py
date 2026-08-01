@@ -1519,7 +1519,8 @@ def create_edit_matches_page():
                             options=[
                                 {'label': 'Blue', 'value': 'Blue'},
                                 {'label': 'Red', 'value': 'Red'},
-                                {'label': 'Half', 'value': 'Half'}
+                                {'label': 'Half', 'value': 'Half'},
+                                {'label': 'Clear / Pending', 'value': ''}
                             ]
                         )
                     ], width=6),
