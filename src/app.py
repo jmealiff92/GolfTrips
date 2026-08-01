@@ -59,15 +59,6 @@ pairing_suggester = PairingSuggester(data_service, db_service)
 cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
 background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
 
-# Server-side backup of each admin's Captain Claude conversation, keyed by (email, year). The
-# pairing-conversation-store/pairing-chat-component state below only lives in the browser tab's
-# memory (dcc.Store default storage_type) - if that tab is backgrounded/reloaded while a reply is
-# still generating, the background callback finishes and writes its result, but there's no live
-# tab left to poll for it and the reply is lost from the UI even though it completed. Saving a copy
-# here as each turn lands lets update_pairing_roster restore the latest known conversation whenever
-# the page (re)loads, instead of always starting blank.
-pairing_chat_cache = diskcache.Cache(os.path.join(cache_dir, 'pairing_chat_sessions'))
-
 # Initialize Dash app with improved theme
 app = dash.Dash(
     __name__,
@@ -2545,9 +2536,9 @@ def update_pairing_roster(year, team):
     PairingSuggester._build_chat_context_block), so only a changed year invalidates it - the team
     filter just changes which roster is checkable for pairing suggestions, and the chat still
     knows about every player regardless. A year change restores that user's last known conversation
-    for the new year from pairing_chat_cache (or starts blank if there isn't one) rather than always
-    wiping it - this is also what runs on page load, so a reply that finished generating after the
-    tab was backgrounded/reloaded and never reached the live page still shows up when it's reopened.
+    for the new year from the DB (or starts blank if there isn't one) rather than always wiping it -
+    this is also what runs on page load, so a reply that finished generating after the tab was
+    backgrounded/reloaded and never reached the live page still shows up when it's reopened.
     A team-only change leaves the chat alone.
     """
     if not year or not team:
@@ -2562,14 +2553,14 @@ def update_pairing_roster(year, team):
         return options, [], no_update, no_update, no_update, no_update
 
     email = get_current_user_email()
-    cached = pairing_chat_cache.get((email, year)) if email else None
-    if cached:
-        return options, [], cached.get('conversation'), cached.get('messages', []), None, None
+    saved = db_service.get_pairing_chat_session(email, year) if email else None
+    if saved:
+        return options, [], saved.get('conversation'), saved.get('messages', []), None, None
     return options, [], None, [], None, None
 
 
 # Clear the on-screen chat and drop its persisted backup for this year, so it doesn't come back
-# on the next page load/reconnect (see pairing_chat_cache above).
+# on the next page load/reconnect (see pairing_chat_sessions table).
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
      Output('pairing-chat-component', 'messages', allow_duplicate=True)],
@@ -2583,7 +2574,7 @@ def clear_pairing_chat(n_clicks, year):
 
     email = get_current_user_email()
     if email and year:
-        pairing_chat_cache.pop((email, year), None)
+        db_service.delete_pairing_chat_session(email, year)
     return None, []
 
 
@@ -2746,7 +2737,7 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
         # background callback below can take up to a minute for a tool-heavy question, and if the
         # tab gets backgrounded/reloaded before it finishes, restoring from this snapshot alone at
         # least preserves "I asked X" instead of silently dropping the message too.
-        pairing_chat_cache.set((email, year), {'conversation': conversation, 'messages': messages})
+        db_service.save_pairing_chat_session(email, year, conversation, messages)
 
     return messages, {
         'team': team, 'year': year, 'available_players': available_players,
@@ -2785,7 +2776,7 @@ def run_pairing_chat_message_background(trigger, messages):
             # a live tab is still around to poll for it - persist it here so a reply that finished
             # after the tab was backgrounded/reloaded isn't lost, and shows up next time
             # update_pairing_roster loads this user's conversation for this year.
-            pairing_chat_cache.set((email, year), {'conversation': result['conversation'], 'messages': messages})
+            db_service.save_pairing_chat_session(email, year, result['conversation'], messages)
         return result['conversation'], messages
     except PairingSuggestionError as e:
         logger.warning("Pairing chat failed (team=%s, year=%s): %s", team, year, e)

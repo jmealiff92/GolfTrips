@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import pandas as pd
 from typing import Optional, List, Dict, Tuple
@@ -115,6 +116,18 @@ class SQLiteDatabaseService(DatabaseServiceBase):
                     FOREIGN KEY (Course) REFERENCES courses(name)
                 )
             ''')
+
+            # Captain Claude chat sessions - lets a conversation/reply survive a background
+            # callback finishing after the browser tab that started it is gone (backgrounded,
+            # reloaded, or a Render redeploy killed the disk the old diskcache-based state lived
+            # on), by living in the same durable DB as everything else instead of local disk.
+            c.execute('''CREATE TABLE IF NOT EXISTS pairing_chat_sessions
+                         (email TEXT,
+                          year INTEGER,
+                          conversation TEXT,
+                          messages TEXT,
+                          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          PRIMARY KEY (email, year))''')
 
     # ============ Match Operations ============
 
@@ -608,6 +621,46 @@ class SQLiteDatabaseService(DatabaseServiceBase):
                     failed += 1
 
         return successful, failed
+
+    # ============ Pairing Chat Operations ============
+
+    def get_pairing_chat_session(self, email: str, year: int) -> Optional[Dict]:
+        """Get the persisted Captain Claude conversation for a user/year, if any"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT conversation, messages FROM pairing_chat_sessions WHERE email = ? AND year = ?',
+                      (email, year))
+            row = c.fetchone()
+            if not row:
+                return None
+            return {
+                'conversation': json.loads(row['conversation']) if row['conversation'] else None,
+                'messages': json.loads(row['messages']) if row['messages'] else [],
+            }
+
+    def save_pairing_chat_session(self, email: str, year: int, conversation, messages) -> bool:
+        """Save (or overwrite) the Captain Claude conversation for a user/year"""
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO pairing_chat_sessions (email, year, conversation, messages, updated_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(email, year)
+                    DO UPDATE SET conversation = excluded.conversation, messages = excluded.messages,
+                                  updated_at = CURRENT_TIMESTAMP
+                ''', (email, year, json.dumps(conversation), json.dumps(messages)))
+                return True
+        except Exception as e:
+            print(f"Error saving pairing chat session: {e}")
+            return False
+
+    def delete_pairing_chat_session(self, email: str, year: int) -> bool:
+        """Delete the persisted Captain Claude conversation for a user/year"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('DELETE FROM pairing_chat_sessions WHERE email = ? AND year = ?', (email, year))
+            return c.rowcount > 0
 
 
 # Backward compatibility: DatabaseService is an alias for SQLiteDatabaseService
