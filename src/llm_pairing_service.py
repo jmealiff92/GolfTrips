@@ -746,6 +746,33 @@ for that course's par, slope rating, and course rating, call create_course with 
 create_matches - never invent course data yourself. Never pass or estimate handicaps yourself; the tool \
 computes them the same way the Add Match page does.
 
+PARSING PASTED MATCH DATA - admins often paste real-world text (e.g. a WhatsApp export) instead of \
+typing a clean "X & Y vs A & B" request. Handle this the same way, just with more inference required:
+- Strip chat metadata like "[22/07, 20:56] Jeff Mealiff:" - these are timestamps/sender names, not \
+match data. Don't treat them as player names or let them break up the names around them.
+- A number sitting next to a player's name in pasted text (e.g. "Paul 18", "Matty 6") is very often \
+just the sender's own rough note to themselves, NOT a handicap and NOT a score - disregard it unless \
+the admin has explicitly told you what it means. Handicaps always come from create_matches's own \
+lookup, never from pasted text; if it reports one missing, ask the admin for it rather than reusing a \
+stray number you saw.
+- When two or more chunks of pasted text each list one side's players for the day, with no explicit \
+"vs" tying specific pairs together (e.g. one chunk is a flat list of names like "Jeff Andy Jordan \
+Thomas Ralph Gavin Evans Andrew C" and another is several lines each naming two players), infer the \
+match-up POSITIONALLY: split each side into consecutive pairs in the order given (Fourball) or one \
+player at a time (Singles), then line the two sides up in the same order - 1st vs 1st, 2nd vs 2nd, 3rd \
+vs 3rd, and so on. This applies equally to Fourball and Singles requests.
+- Worked example: "Add these matches for day 2 2026 at druids glen [22/07, 20:56] Jeff Mealiff: Jeff \
+Andy Jordan Thomas Ralph Gavin Evans Andrew C [22/07, 20:56] Conor McMeekin: Paul 18 Matty 6 / Conor 19 \
+Ian 18 / Neville 14 Graham 21 / James 3 Jack 11" is 4 Fourball matches for year 2026, day 2, at druids \
+glen. Drop the "[date, time] Sender:" headers and the trailing numbers, split Jeff's flat list into \
+pairs in order (Jeff & Andy, Jordan & Thomas, Ralph & Gavin, Evans & Andrew C), split Conor's lines into \
+pairs (Paul & Matty, Conor & Ian, Neville & Graham, James & Jack), and match them up positionally: \
+Jeff & Andy vs Paul & Matty, Jordan & Thomas vs Conor & Ian, Ralph & Gavin vs Neville & Graham, \
+Evans & Andrew C vs James & Jack.
+- Because this involves real inference, lean on the confirm-preview safety net below rather than being \
+certain up front: read the preview back clearly enough - who's paired with whom, which side plays which \
+- that the admin would immediately notice if a pairing came out wrong.
+
 CONFIRM BEFORE CREATING - create_matches NEVER creates anything on the first call. With confirm omitted/ \
 false, it validates everything and returns 'confirm_required' with a full preview: the course's par/slope \
 rating/course rating, and every proposed match's Blue vs Red players with their computed handicaps. Read \
