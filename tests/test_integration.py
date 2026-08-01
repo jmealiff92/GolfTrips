@@ -216,6 +216,7 @@ class TestMatchCreationWithAutoCalculation(unittest.TestCase):
             handicap_index_p3=p2_index,
             handicap_index_p4=None,
             slope_rating=course['slope_rating'],
+            course_rating=course['course_rating'],
             par=course['par']
         )
 
@@ -262,6 +263,7 @@ class TestMatchCreationWithAutoCalculation(unittest.TestCase):
             handicap_index_p3=p3_index,
             handicap_index_p4=p4_index,
             slope_rating=course['slope_rating'],
+            course_rating=course['course_rating'],
             par=course['par']
         )
 
@@ -408,6 +410,7 @@ class TestEndToEndWorkflow(unittest.TestCase):
             handicap_index_p3=phil_index,
             handicap_index_p4=None,
             slope_rating=course['slope_rating'],
+            course_rating=course['course_rating'],
             par=course['par']
         )
 

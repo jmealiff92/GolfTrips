@@ -151,7 +151,8 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
         expected = HandicapCalculator.calculate_match_handicaps(
             match_type='Singles', handicap_index_p1=12.0, handicap_index_p2=None,
-            handicap_index_p3=14.0, handicap_index_p4=None, slope_rating=128, par=71,
+            handicap_index_p3=14.0, handicap_index_p4=None,
+            slope_rating=128, course_rating=71.5, par=71,
         )
         self.assertEqual(preview['blue_players'][0]['handicap'], expected[0])
         self.assertEqual(preview['red_players'][0]['handicap'], expected[1])
@@ -198,7 +199,8 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
         expected = HandicapCalculator.calculate_match_handicaps(
             match_type='Singles', handicap_index_p1=12.0, handicap_index_p2=None,
-            handicap_index_p3=14.0, handicap_index_p4=None, slope_rating=128, par=71,
+            handicap_index_p3=14.0, handicap_index_p4=None,
+            slope_rating=128, course_rating=71.5, par=71,
         )
         self.assertEqual(created['blue_players'][0]['handicap'], expected[0])
         self.assertEqual(created['red_players'][0]['handicap'], expected[1])

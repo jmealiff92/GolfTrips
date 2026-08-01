@@ -10,17 +10,17 @@ class TestHandicapCalculator(unittest.TestCase):
     """Test cases for HandicapCalculator"""
 
     def test_course_handicap_standard_slope(self):
-        """Test course handicap calculation with standard slope (113)"""
-        # Standard slope should give course handicap = handicap index
+        """Test course handicap calculation with standard slope (113) and no CR/par offset"""
+        # Standard slope and course_rating == par should give course handicap = handicap index
         result = HandicapCalculator.calculate_course_handicap(
-            handicap_index=10.0, slope_rating=113, par=72)
+            handicap_index=10.0, slope_rating=113, course_rating=72.0, par=72)
         self.assertEqual(result, 10)
 
     def test_course_handicap_high_slope(self):
         """Test course handicap calculation with high slope"""
         # Higher slope should increase course handicap
         result = HandicapCalculator.calculate_course_handicap(
-            handicap_index=10.0, slope_rating=140, par=72)
+            handicap_index=10.0, slope_rating=140, course_rating=72.0, par=72)
         # 10 * (140/113) = 12.39 -> rounds to 12
         self.assertEqual(result, 12)
 
@@ -28,7 +28,7 @@ class TestHandicapCalculator(unittest.TestCase):
         """Test course handicap calculation with low slope"""
         # Lower slope should decrease course handicap
         result = HandicapCalculator.calculate_course_handicap(
-            handicap_index=10.0, slope_rating=100, par=72)
+            handicap_index=10.0, slope_rating=100, course_rating=72.0, par=72)
         # 10 * (100/113) = 8.85 -> rounds to 9
         self.assertEqual(result, 9)
 
@@ -36,13 +36,27 @@ class TestHandicapCalculator(unittest.TestCase):
         """Test course handicap rounding"""
         # Test rounding down
         result1 = HandicapCalculator.calculate_course_handicap(
-            handicap_index=10.4, slope_rating=113, par=72)
+            handicap_index=10.4, slope_rating=113, course_rating=72.0, par=72)
         self.assertEqual(result1, 10)
 
         # Test rounding up
         result2 = HandicapCalculator.calculate_course_handicap(
-            handicap_index=10.6, slope_rating=113, par=72)
+            handicap_index=10.6, slope_rating=113, course_rating=72.0, par=72)
         self.assertEqual(result2, 11)
+
+    def test_course_handicap_course_rating_adjustment(self):
+        """Test that (Course Rating - Par) shifts the course handicap"""
+        # Course rating below par lowers the course handicap
+        result_low = HandicapCalculator.calculate_course_handicap(
+            handicap_index=10.0, slope_rating=113, course_rating=70.6, par=72)
+        # 10 * (113/113) + (70.6 - 72) = 10 - 1.4 = 8.6 -> rounds to 9
+        self.assertEqual(result_low, 9)
+
+        # Course rating above par raises the course handicap
+        result_high = HandicapCalculator.calculate_course_handicap(
+            handicap_index=10.0, slope_rating=113, course_rating=74.0, par=72)
+        # 10 * (113/113) + (74.0 - 72) = 10 + 2 = 12
+        self.assertEqual(result_high, 12)
 
     def test_singles_equal_handicaps(self):
         """Test singles match with equal handicaps"""
@@ -142,6 +156,7 @@ class TestHandicapCalculator(unittest.TestCase):
             handicap_index_p3=15.2,
             handicap_index_p4=None,
             slope_rating=130,
+            course_rating=72.0,
             par=72
         )
         # Course handicaps: 10.5*(130/113)=12.08->12, 15.2*(130/113)=17.49->17
@@ -158,6 +173,7 @@ class TestHandicapCalculator(unittest.TestCase):
             handicap_index_p3=10.0,
             handicap_index_p4=15.0,
             slope_rating=120,
+            course_rating=72.0,
             par=72
         )
         # Course handicaps with slope 120:
@@ -184,6 +200,7 @@ class TestHandicapCalculator(unittest.TestCase):
                 handicap_index_p3=10.0,
                 handicap_index_p4=None,
                 slope_rating=113,
+                course_rating=72.0,
                 par=72
             )
 
@@ -197,6 +214,7 @@ class TestHandicapCalculator(unittest.TestCase):
             handicap_index_p3=10.0,
             handicap_index_p4=None,
             slope_rating=113,
+            course_rating=72.0,
             par=72
         )
         # Scratch player gets 0, other gets 10
@@ -211,6 +229,7 @@ class TestHandicapCalculator(unittest.TestCase):
             handicap_index_p3=5.0,
             handicap_index_p4=None,
             slope_rating=113,
+            course_rating=72.0,
             par=72
         )
         # p1: -2, p3: 5, difference is 7
@@ -220,19 +239,24 @@ class TestHandicapCalculator(unittest.TestCase):
 
     def test_fourball_close_low_handicaps_dont_diverge_needlessly(self):
         """Regression test: two very close low indexes (2.9, 3.1) on a
-        slope-126 course should both play to scratch, and the higher
-        handicaps should receive the correct 90%-allowance strokes."""
+        CR 70.6 / Par 71 / Slope 129 course should both play to scratch
+        once the (Course Rating - Par) adjustment is applied, and the
+        higher handicaps should receive the correct 90%-allowance strokes."""
         result = HandicapCalculator.calculate_match_handicaps(
             match_type='Fourball',
             handicap_index_p1=2.9,
             handicap_index_p2=3.1,
             handicap_index_p3=11.6,
             handicap_index_p4=24.0,
-            slope_rating=126,
-            par=72
+            slope_rating=129,
+            course_rating=70.6,
+            par=71
         )
-        # Course handicaps: 2.9*(126/113)=3.23->3, 3.1*(126/113)=3.45->3,
-        # 11.6*(126/113)=12.93->13, 24.0*(126/113)=26.76->27
+        # Course handicaps: index*(129/113) + (70.6-71)
+        # p1: 2.9*1.1416 - 0.4 = 2.9106 -> 3
+        # p2: 3.1*1.1416 - 0.4 = 3.1389 -> 3
+        # p3: 11.6*1.1416 - 0.4 = 12.8425 -> 13
+        # p4: 24.0*1.1416 - 0.4 = 26.998 -> 27
         # Lowest is 3 (p1 and p2 tie)
         # p1: 0, p2: 0
         # p3: (13-3)*0.90 = 9
@@ -241,7 +265,7 @@ class TestHandicapCalculator(unittest.TestCase):
 
     def test_realistic_scenario_st_andrews(self):
         """Test realistic scenario: St Andrews Old Course"""
-        # St Andrews Old Course: Par 72, Slope ~130
+        # St Andrews Old Course: Par 72, Slope ~130, Course Rating ~72.5
         result = HandicapCalculator.calculate_match_handicaps(
             match_type='Fourball',
             handicap_index_p1=12.5,
@@ -249,6 +273,7 @@ class TestHandicapCalculator(unittest.TestCase):
             handicap_index_p3=9.2,
             handicap_index_p4=15.7,
             slope_rating=130,
+            course_rating=72.5,
             par=72
         )
         # Verify we get 4 handicaps for fourball

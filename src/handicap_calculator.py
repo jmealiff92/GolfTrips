@@ -18,24 +18,23 @@ class HandicapCalculator:
         return int(Decimal(str(value)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
 
     @staticmethod
-    def calculate_course_handicap(handicap_index: float, slope_rating: float, par: int) -> int:
+    def calculate_course_handicap(handicap_index: float, slope_rating: float,
+                                   course_rating: float, par: int) -> int:
         """
         Calculate course handicap using WHS formula (R&A)
 
-        Formula: Course Handicap = Handicap Index × (Slope Rating / 113)
-
-        The par adjustment is NOT included in the WHS course handicap calculation.
-        Par is used separately for playing handicap calculations if needed.
+        Formula: Course Handicap = Handicap Index × (Slope Rating / 113) + (Course Rating - Par)
 
         Args:
             handicap_index: Player's handicap index
             slope_rating: Course slope rating (typically 55-155, standard is 113)
-            par: Course par (included for completeness but not used in basic calculation)
+            course_rating: Course rating (expected score for a scratch golfer)
+            par: Course par
 
         Returns:
             Course handicap (rounded to nearest integer using standard rounding)
         """
-        course_handicap = handicap_index * (slope_rating / 113)
+        course_handicap = handicap_index * (slope_rating / 113) + (course_rating - par)
         return HandicapCalculator._round_half_up(course_handicap)
 
     @staticmethod
@@ -115,6 +114,7 @@ class HandicapCalculator:
                                  handicap_index_p3: float,
                                  handicap_index_p4: Optional[float],
                                  slope_rating: float,
+                                 course_rating: float,
                                  par: int) -> tuple:
         """
         Complete calculation from handicap indexes to playing handicaps for match play
@@ -130,6 +130,7 @@ class HandicapCalculator:
             handicap_index_p3: Player 3 handicap index (Team 2)
             handicap_index_p4: Player 4 handicap index (Team 2) - None for singles
             slope_rating: Course slope rating
+            course_rating: Course rating
             par: Course par
 
         Returns:
@@ -139,9 +140,9 @@ class HandicapCalculator:
         if match_type == 'Singles':
             # Calculate course handicaps
             ch_p1 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p1, slope_rating, par)
+                handicap_index_p1, slope_rating, course_rating, par)
             ch_p3 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p3, slope_rating, par)
+                handicap_index_p3, slope_rating, course_rating, par)
 
             # Calculate playing handicaps with 100% allowance (match play standard)
             return HandicapCalculator.calculate_playing_handicap_singles(
@@ -150,13 +151,13 @@ class HandicapCalculator:
         elif match_type == 'Fourball':
             # Calculate course handicaps for all players
             ch_p1 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p1, slope_rating, par)
+                handicap_index_p1, slope_rating, course_rating, par)
             ch_p2 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p2, slope_rating, par)
+                handicap_index_p2, slope_rating, course_rating, par)
             ch_p3 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p3, slope_rating, par)
+                handicap_index_p3, slope_rating, course_rating, par)
             ch_p4 = HandicapCalculator.calculate_course_handicap(
-                handicap_index_p4, slope_rating, par)
+                handicap_index_p4, slope_rating, course_rating, par)
 
             # Calculate playing handicaps with 90% allowance (fourball standard)
             return HandicapCalculator.calculate_playing_handicap_fourball(
