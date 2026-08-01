@@ -520,7 +520,7 @@ class PairingSuggester:
         prompt = self._build_suggestion_prompt(team, year, players)
 
         try:
-            client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0)
+            client = anthropic.Anthropic(api_key=self.api_key)
         except Exception as e:
             raise PairingSuggestionError(f"Could not initialize the Claude client: {e}") from e
 
@@ -591,7 +591,7 @@ Admin: {user_message}"""
             conversation = [{"role": "user", "content": seed}]
 
         try:
-            client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0)
+            client = anthropic.Anthropic(api_key=self.api_key)
         except Exception as e:
             raise PairingSuggestionError(f"Could not initialize the Claude client: {e}") from e
 
@@ -865,15 +865,19 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         raise PairingSuggestionError("Claude kept requesting tool calls without finishing a reply. Try again.")
 
     def _call_api(self, client, conversation: list[dict]):
-        """One Claude API call, wrapping any failure as PairingSuggestionError."""
+        """One Claude API call, wrapping any failure as PairingSuggestionError. Streams the
+        response rather than waiting on a single blocking call - bytes keep arriving as Claude
+        generates, so a long tool-heavy or long-output turn (e.g. predicting a full slate of
+        pending matches) doesn't sit silent long enough to trip a client-side read timeout."""
         logger.info("Calling Claude API (model=%s, turns=%d)", self.model, len(conversation))
         try:
-            response = client.messages.create(
+            with client.messages.stream(
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 tools=self.TOOLS,
                 messages=conversation,
-            )
+            ) as stream:
+                response = stream.get_final_message()
         except anthropic.APITimeoutError as e:
             logger.warning("Claude API request timed out: %s", e)
             raise PairingSuggestionError("Claude API request timed out. Try again.") from e
