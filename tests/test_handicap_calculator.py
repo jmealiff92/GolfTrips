@@ -218,6 +218,27 @@ class TestHandicapCalculator(unittest.TestCase):
         # p3 (higher handicap) receives 7 strokes
         self.assertEqual(result, (0, 7))
 
+    def test_fourball_close_low_handicaps_dont_diverge_needlessly(self):
+        """Regression test: two very close low indexes (2.9, 3.1) on a
+        slope-126 course should both play to scratch, and the higher
+        handicaps should receive the correct 90%-allowance strokes."""
+        result = HandicapCalculator.calculate_match_handicaps(
+            match_type='Fourball',
+            handicap_index_p1=2.9,
+            handicap_index_p2=3.1,
+            handicap_index_p3=11.6,
+            handicap_index_p4=24.0,
+            slope_rating=126,
+            par=72
+        )
+        # Course handicaps: 2.9*(126/113)=3.23->3, 3.1*(126/113)=3.45->3,
+        # 11.6*(126/113)=12.93->13, 24.0*(126/113)=26.76->27
+        # Lowest is 3 (p1 and p2 tie)
+        # p1: 0, p2: 0
+        # p3: (13-3)*0.90 = 9
+        # p4: (27-3)*0.90 = 21.6 -> 22
+        self.assertEqual(result, (0, 0, 9, 22))
+
     def test_realistic_scenario_st_andrews(self):
         """Test realistic scenario: St Andrews Old Course"""
         # St Andrews Old Course: Par 72, Slope ~130
