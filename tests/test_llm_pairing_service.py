@@ -36,6 +36,25 @@ class FakeMessage:
         self.stop_details = stop_details
 
 
+def _stream_client(final_messages=None, error=None):
+    """Build a MagicMock Anthropic client whose messages.stream(...) context manager stands in
+    for PairingSuggester._call_api's streaming call. get_final_message() on the entered context
+    yields `final_messages` - a single FakeMessage repeated on every call, or a list consumed one
+    per call (mirroring the old .create.side_effect list pattern). Pass `error` instead to make
+    messages.stream(...) itself raise, standing in for an API error surfaced before/during
+    streaming."""
+    fake_client = MagicMock()
+    if error is not None:
+        fake_client.messages.stream.side_effect = error
+        return fake_client
+    entered = fake_client.messages.stream.return_value.__enter__.return_value
+    if isinstance(final_messages, list):
+        entered.get_final_message.side_effect = final_messages
+    else:
+        entered.get_final_message.return_value = final_messages
+    return fake_client
+
+
 class TestPairingSuggester(unittest.TestCase):
     """Unit tests for PairingSuggester - no real network calls, the Anthropic client is mocked."""
 
@@ -172,8 +191,7 @@ class TestPairingSuggester(unittest.TestCase):
         payload = json.dumps({
             "pairings": [{"players": ["Alice", "Bob"], "rationale": "Balanced skill and strong synergy."}]
         })
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(payload)
+        fake_client = _stream_client(FakeMessage(payload))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
         self.assertEqual(result['team'], 'Blue')
@@ -188,8 +206,7 @@ class TestPairingSuggester(unittest.TestCase):
         payload = "```json\n" + json.dumps({
             "pairings": [{"players": ["Alice", "Bob"], "rationale": "Good fit."}]
         }) + "\n```"
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(payload)
+        fake_client = _stream_client(FakeMessage(payload))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
         self.assertEqual(len(result['pairings']), 1)
@@ -198,36 +215,32 @@ class TestPairingSuggester(unittest.TestCase):
         suggester = self._suggester()
         bad_payload = json.dumps({"pairings": [{"players": ["Alice", "Alice"], "rationale": "x"}]})
         good_payload = json.dumps({"pairings": [{"players": ["Alice", "Bob"], "rationale": "ok"}]})
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = [FakeMessage(bad_payload), FakeMessage(good_payload)]
+        fake_client = _stream_client([FakeMessage(bad_payload), FakeMessage(good_payload)])
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
-        self.assertEqual(fake_client.messages.create.call_count, 2)
+        self.assertEqual(fake_client.messages.stream.call_count, 2)
         self.assertEqual(result['pairings'][0]['players'], ['Alice', 'Bob'])
 
     def test_persistently_invalid_response_raises_after_max_attempts(self):
         suggester = self._suggester()
         bad_payload = json.dumps({"pairings": [{"players": ["Alice"], "rationale": "x"}]})
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(bad_payload)
+        fake_client = _stream_client(FakeMessage(bad_payload))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
-        self.assertEqual(fake_client.messages.create.call_count, 2)
+        self.assertEqual(fake_client.messages.stream.call_count, 2)
 
     def test_response_missing_a_player_is_rejected(self):
         suggester = self._suggester()
         bad_payload = json.dumps({"pairings": [{"players": ["Alice", "Carol"], "rationale": "x"}]})
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(bad_payload)
+        fake_client = _stream_client(FakeMessage(bad_payload))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
 
     def test_non_json_response_is_rejected(self):
         suggester = self._suggester()
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage("Sure, here are some thoughts on pairings...")
+        fake_client = _stream_client(FakeMessage("Sure, here are some thoughts on pairings..."))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -238,10 +251,9 @@ class TestPairingSuggester(unittest.TestCase):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
         response = httpx.Response(401, request=request)
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.AuthenticationError(
+        fake_client = _stream_client(error=anthropic.AuthenticationError(
             'bad key', response=response, body=None
-        )
+        ))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -251,10 +263,9 @@ class TestPairingSuggester(unittest.TestCase):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
         response = httpx.Response(429, request=request)
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.RateLimitError(
+        fake_client = _stream_client(error=anthropic.RateLimitError(
             'rate limited', response=response, body=None
-        )
+        ))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -263,8 +274,7 @@ class TestPairingSuggester(unittest.TestCase):
     def test_generic_connection_error_is_wrapped_gracefully(self):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.APIConnectionError(request=request)
+        fake_client = _stream_client(error=anthropic.APIConnectionError(request=request))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -272,8 +282,7 @@ class TestPairingSuggester(unittest.TestCase):
     def test_timeout_error_is_wrapped_gracefully_and_distinctly(self):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.APITimeoutError(request=request)
+        fake_client = _stream_client(error=anthropic.APITimeoutError(request=request))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -281,10 +290,9 @@ class TestPairingSuggester(unittest.TestCase):
 
     def test_empty_reply_with_refusal_stop_reason_raises_visible_error(self):
         suggester = self._suggester()
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(
+        fake_client = _stream_client(FakeMessage(
             content=[FakeNonTextBlock('refusal')], stop_reason='refusal'
-        )
+        ))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
@@ -294,13 +302,12 @@ class TestPairingSuggester(unittest.TestCase):
 
     def test_chat_without_prior_conversation_seeds_context_in_a_single_call(self):
         suggester = self._suggester()
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage("Sure, Alice and Bob look strong together.")
+        fake_client = _stream_client(FakeMessage("Sure, Alice and Bob look strong together."))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.continue_conversation(
                 'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="What do you think?"
             )
-        self.assertEqual(fake_client.messages.create.call_count, 1)
+        self.assertEqual(fake_client.messages.stream.call_count, 1)
         self.assertEqual(result['reply'], "Sure, Alice and Bob look strong together.")
         self.assertEqual(len(result['conversation']), 2)
         seed_content = result['conversation'][0]['content']
@@ -314,8 +321,7 @@ class TestPairingSuggester(unittest.TestCase):
         subset of players currently checked in the pairing UI - Carol (Red team, unchecked) must
         still show up so open-ended questions aren't scoped to one team."""
         suggester = self._suggester()
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage("Here's the trip so far.")
+        fake_client = _stream_client(FakeMessage("Here's the trip so far."))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.continue_conversation(
                 'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="How's the trip going?"
@@ -332,14 +338,13 @@ class TestPairingSuggester(unittest.TestCase):
             {'role': 'user', 'content': 'original prompt'},
             {'role': 'assistant', 'content': 'original reply'},
         ]
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage("Here's my feedback on that pairing.")
+        fake_client = _stream_client(FakeMessage("Here's my feedback on that pairing."))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.continue_conversation(
                 'Blue', 2026, ['Alice', 'Bob'], conversation=original_conversation,
                 user_message="What about pairing Alice with Carol instead?"
             )
-        self.assertEqual(fake_client.messages.create.call_count, 1)
+        self.assertEqual(fake_client.messages.stream.call_count, 1)
         self.assertEqual(len(original_conversation), 2)  # caller's list untouched
         self.assertEqual(len(result['conversation']), 4)
         self.assertEqual(result['conversation'][-1], {'role': 'assistant', 'content': result['reply']})
@@ -361,10 +366,9 @@ class TestPairingSuggester(unittest.TestCase):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
         response = httpx.Response(429, request=request)
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.RateLimitError(
+        fake_client = _stream_client(error=anthropic.RateLimitError(
             'rate limited', response=response, body=None
-        )
+        ))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
@@ -373,8 +377,7 @@ class TestPairingSuggester(unittest.TestCase):
     def test_chat_timeout_error_is_wrapped_gracefully(self):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = anthropic.APITimeoutError(request=request)
+        fake_client = _stream_client(error=anthropic.APITimeoutError(request=request))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
@@ -382,8 +385,7 @@ class TestPairingSuggester(unittest.TestCase):
 
     def test_chat_empty_reply_raises_visible_error(self):
         suggester = self._suggester()
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = FakeMessage(content=[], stop_reason='max_tokens')
+        fake_client = _stream_client(FakeMessage(content=[], stop_reason='max_tokens'))
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
                 suggester.continue_conversation('Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Hi")
@@ -444,15 +446,14 @@ class TestPairingSuggesterTools(unittest.TestCase):
             stop_reason='tool_use',
         )
         final = FakeMessage("Alice won 3&2 on day 1 - not especially tight.")
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = [tool_call, final]
+        fake_client = _stream_client([tool_call, final])
 
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.continue_conversation(
                 'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Was Alice's win tight?"
             )
 
-        self.assertEqual(fake_client.messages.create.call_count, 2)
+        self.assertEqual(fake_client.messages.stream.call_count, 2)
         self.assertEqual(result['reply'], "Alice won 3&2 on day 1 - not especially tight.")
 
         tool_result_turn = result['conversation'][-2]
@@ -467,8 +468,7 @@ class TestPairingSuggesterTools(unittest.TestCase):
             content=[FakeToolUseBlock('tool_1', 'not_a_real_tool', {})], stop_reason='tool_use',
         )
         final = FakeMessage("Sorry, I can't look that up.")
-        fake_client = MagicMock()
-        fake_client.messages.create.side_effect = [tool_call, final]
+        fake_client = _stream_client([tool_call, final])
 
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             result = suggester.continue_conversation(
@@ -484,8 +484,7 @@ class TestPairingSuggesterTools(unittest.TestCase):
         looping_call = FakeMessage(
             content=[FakeToolUseBlock('tool_1', 'get_course_stats', {})], stop_reason='tool_use',
         )
-        fake_client = MagicMock()
-        fake_client.messages.create.return_value = looping_call
+        fake_client = _stream_client(looping_call)
 
         with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
             with self.assertRaises(PairingSuggestionError) as ctx:
