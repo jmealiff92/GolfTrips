@@ -273,7 +273,15 @@ class PairingSuggester:
                 "with those, then retry create_matches. If it returns 'validation_failed', relay the "
                 "listed problems to the admin and ask them to clarify rather than guessing. Handicaps "
                 "are computed automatically the same way the Add Match page does - never pass or ask "
-                "for them yourself."
+                "for them yourself, using whatever par/slope rating/course rating is on file for the "
+                "resolved course. Because those values directly affect the handicaps this tool computes, "
+                "every call must be confirmed: the first call (with confirm_course_details omitted or "
+                "false) creates nothing and instead returns 'confirm_course_details' with the resolved "
+                "course's current par/slope rating/course rating - read those numbers back to the admin "
+                "and ask them to confirm they're correct (or use update_course first if they're wrong), "
+                "then call create_matches again with confirm_course_details=true and the same arguments "
+                "to actually create the matches. Skip asking again within the same request only if the "
+                "admin already stated the course's par/slope/rating themselves in this exchange."
             ),
             "input_schema": {
                 "type": "object",
@@ -300,6 +308,14 @@ class PairingSuggester:
                             "required": ["match_type", "side_a_players", "side_b_players"],
                         },
                     },
+                    "confirm_course_details": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true only on a second call, after the admin has confirmed the course's "
+                            "par/slope rating/course rating (returned by the first call) are correct. "
+                            "Omit or leave false on the first attempt."
+                        ),
+                    },
                 },
                 "required": ["year", "day", "course", "matches"],
             },
@@ -324,41 +340,93 @@ class PairingSuggester:
             },
         },
         {
-            "name": "record_match_result",
+            "name": "update_course",
             "description": (
-                "Record the result of a match from a natural-language report like 'Jeff beat Conor 1up' "
-                "or 'Ian lost to Jordan 1 down'. player_a/player_b are just the two players named in the "
-                "message, in any order; `outcome` says which of them actually won (or 'half' if halved/"
-                "all square) - always work out the winner yourself before calling. Always normalize "
-                "`score` to the WINNING player's margin in the format '1UP', '3&2', etc, regardless of "
-                "how the admin phrased it - e.g. 'Ian lost to Jordan 1 down' means Jordan won by 1, so "
-                "call this with player_a='Ian', player_b='Jordan', outcome='player_b_won', "
-                "score='1UP' (NOT '1 down' and NOT attached to Ian). If the admin didn't state a score "
-                "at all, omit the `score` argument entirely rather than guessing - the tool will return "
-                "a 'score_required'/'invalid_score' error so you can ask the admin for it; if they say "
-                "they don't know or can't provide one, call again with score='Unknown'. Halved matches "
-                "always record as score 'A/S' automatically - you don't need to pass a score for "
-                "outcome='half'. If the admin didn't state a year/day, omit them and this tool searches "
-                "for the one pending (not yet decided) match where these two players are on opposite "
-                "sides; if it finds none ('no_pending_match') or more than one ('ambiguous_match'), it "
-                "returns what it found so you can ask the admin to confirm the match (e.g. by year/day) "
-                "rather than guessing. To undo a result that was recorded incorrectly (e.g. 'clear the "
-                "result for Jeff vs Conor', 'that was wrong, they haven't played yet'), call this with "
-                "outcome='clear' - it searches decided (non-pending) matches instead of pending ones for "
-                "these two players, resets the match back to pending (no result, no score), and you don't "
-                "need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies if it "
-                "can't find exactly one match to clear."
+                "Update an existing course's par, slope rating, and/or course rating - e.g. 'update "
+                "Druids Glen to slope 132' or 'the par for Druids Glen is actually 72, not 71'. Resolves "
+                "`name` the same way create_matches does (case-insensitive, unambiguous partial match); "
+                "if it can't find exactly one matching course it returns an error rather than guessing. "
+                "Only pass the field(s) the admin actually wants changed - any field you omit keeps its "
+                "current stored value, so you don't need to ask for or restate values that aren't "
+                "changing. Never guess a new value the admin didn't state."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "player_a": {"type": "string"},
-                    "player_b": {"type": "string"},
+                    "name": {"type": "string"},
+                    "par": {"type": "integer", "description": "Omit to leave par unchanged."},
+                    "slope_rating": {"type": "number", "description": "Omit to leave slope rating unchanged."},
+                    "course_rating": {"type": "number", "description": "Omit to leave course rating unchanged."},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "record_match_result",
+            "description": (
+                "Record the result of a match from a natural-language report like 'Jeff beat Conor 1up' "
+                "or 'Ian lost to Jordan 1 down'. For SINGLES (or to identify a match by just one player "
+                "from each side), use player_a/player_b - just the two players named in the message, in "
+                "any order; `outcome` says which of them actually won (or 'half' if halved/all square) - "
+                "always work out the winner yourself before calling. For FOURBALL results reported as a "
+                "pairing vs pairing (e.g. 'Jeff & Jordan beat Conor & Ian 2&1', 'Ralph & Andy halved with "
+                "Matty & Neville'), use fourball_side_a/fourball_side_b INSTEAD - each a list of exactly "
+                "the 2 partners on that side - and never call this twice with individual names for a "
+                "Fourball result: the tool expects player_a/player_b to be OPPONENTS, not partners, so two "
+                "separate single-name calls won't find the match. Provide either player_a+player_b OR "
+                "fourball_side_a+fourball_side_b, never both. In fourball mode `outcome` still refers to "
+                "fourball_side_a ('player_a_won' = side_a won) / fourball_side_b ('player_b_won' = side_b "
+                "won). Always normalize `score` to the WINNING side's margin in the format '1UP', '3&2', "
+                "etc, regardless of how the admin phrased it - e.g. 'Ian lost to Jordan 1 down' means "
+                "Jordan won by 1, so call this with player_a='Ian', player_b='Jordan', "
+                "outcome='player_b_won', score='1UP' (NOT '1 down' and NOT attached to Ian). If the admin "
+                "didn't state a score at all, omit the `score` argument entirely rather than guessing - "
+                "the tool will return a 'score_required'/'invalid_score' error so you can ask the admin "
+                "for it; if they say they don't know or can't provide one, call again with "
+                "score='Unknown'. Halved matches always record as score 'A/S' automatically - you don't "
+                "need to pass a score for outcome='half'. If the admin didn't state a year/day, omit them "
+                "and this tool searches for the one pending (not yet decided) match where these players "
+                "are on opposite sides; if it finds none ('no_pending_match') or more than one "
+                "('ambiguous_match'), it returns what it found so you can ask the admin to confirm the "
+                "match (e.g. by year/day) rather than guessing. To undo a result that was recorded "
+                "incorrectly (e.g. 'clear the result for Jeff vs Conor', 'that was wrong, they haven't "
+                "played yet'), call this with outcome='clear' (same player_a/player_b or "
+                "fourball_side_a/fourball_side_b rules apply) - it searches decided (non-pending) matches "
+                "instead of pending ones, resets the match back to pending (no result, no score), and you "
+                "don't need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies "
+                "if it can't find exactly one match to clear."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "player_a": {
+                        "type": "string",
+                        "description": "Singles mode: one player. Omit if using fourball_side_a/fourball_side_b instead.",
+                    },
+                    "player_b": {
+                        "type": "string",
+                        "description": "Singles mode: one player. Omit if using fourball_side_a/fourball_side_b instead.",
+                    },
+                    "fourball_side_a": {
+                        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+                        "description": (
+                            "Fourball mode: both partners on one side, e.g. ['Jeff', 'Jordan']. Use with "
+                            "fourball_side_b instead of player_a/player_b."
+                        ),
+                    },
+                    "fourball_side_b": {
+                        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+                        "description": (
+                            "Fourball mode: both partners on the other side. Use with fourball_side_a "
+                            "instead of player_a/player_b."
+                        ),
+                    },
                     "outcome": {
                         "type": "string", "enum": ["player_a_won", "player_b_won", "half", "clear"],
                         "description": (
-                            "Which player won, 'half' if the match was halved, or 'clear' to undo an "
-                            "incorrectly-recorded result and reset the match back to pending."
+                            "Which side won - player_a/fourball_side_a vs player_b/fourball_side_b - "
+                            "'half' if halved, or 'clear' to undo an incorrectly-recorded result and "
+                            "reset the match back to pending."
                         ),
                     },
                     "score": {
@@ -368,7 +436,7 @@ class PairingSuggester:
                     "year": {"type": "integer", "description": "Omit unless the admin stated it."},
                     "day": {"type": "integer", "description": "Omit unless the admin stated it."},
                 },
-                "required": ["player_a", "player_b", "outcome"],
+                "required": ["outcome"],
             },
         },
     ]
@@ -616,8 +684,19 @@ actual team from that year's roster, rejecting the match if partners aren't on t
 sides are the same team; relay any 'validation_failed' problems to the admin plainly and ask them to \
 clarify rather than retrying with a guess. If create_matches returns 'course_not_found', ask the admin \
 for that course's par, slope rating, and course rating, call create_course with those values, then retry \
-create_matches - never invent course data yourself. Never pass or estimate handicaps yourself; the tool \
-computes them the same way the Add Match page does.
+create_matches - never invent course data yourself. Every create_matches call also requires confirming \
+the course's details first: the first call (confirm_course_details omitted/false) creates nothing and \
+returns 'confirm_course_details' with the resolved course's current par/slope rating/course rating - read \
+those numbers back to the admin and ask them to confirm before proceeding, since they directly change the \
+handicaps this tool computes. If the admin says one is wrong, call update_course to fix it first (only \
+passing the field(s) that need to change), then retry create_matches with confirm_course_details=true. \
+Don't ask again if the admin already stated the course's numbers themselves earlier in the same exchange. \
+Never pass or estimate handicaps yourself; the tool computes them the same way the Add Match page does.
+
+EDITING COURSES - update_course lets you fix a course's par, slope rating, or course rating directly from \
+a request like "update Druids Glen to slope 132" or "the par for Druids Glen is actually 72" - only pass \
+the field(s) the admin is actually changing, everything else stays as-is. Never guess a new value; if the \
+admin flags something as wrong without saying what it should be, ask for the correct number.
 
 RECORDING MATCH RESULTS - you can record a result directly with record_match_result, e.g. from "Jeff \
 beat Conor 1up" or "Ian lost to Jordan 1 down". Work out who actually won before calling: always express \
@@ -631,7 +710,11 @@ them and let the tool search for the one pending match between the two named pla
 confirm the match/year/day rather than guessing which one they mean or silently picking the first result. \
 If the admin says a result was entered wrong and wants it undone (e.g. "clear that result", "they haven't \
 actually played yet", "I recorded that incorrectly"), call record_match_result with outcome="clear" for \
-the two players - it resets the match back to pending (no result, no score) and you don't need a `score`.
+the two players - it resets the match back to pending (no result, no score) and you don't need a `score`. \
+For a FOURBALL result reported as a pairing vs pairing (e.g. "Jeff & Jordan beat Conor & Ian 2&1"), use \
+fourball_side_a/fourball_side_b instead of player_a/player_b - never make two separate record_match_result \
+calls with individual names for a fourball result, since the tool expects player_a/player_b to be \
+opponents, not partners, so it won't find the match that way.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -740,6 +823,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_all_players": self._tool_get_all_players,
             "create_matches": self._tool_create_matches,
             "create_course": self._tool_create_course,
+            "update_course": self._tool_update_course,
             "record_match_result": self._tool_record_match_result,
         }
         handler = handlers.get(name)
@@ -877,6 +961,23 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             pass
         return value
 
+    @staticmethod
+    def _claim_group_slot(name: str, available: list, used: list) -> bool:
+        """Try to match `name` (case-insensitive exact-or-substring) against one not-yet-claimed
+        entry in `available`, marking it used in place. Returns whether a slot was claimed - used
+        by _group_side_of to confirm every member of a fourball pairing maps to a distinct player
+        slot on the same side, rather than two names matching the same slot."""
+        query = (name or "").strip().lower()
+        if not query:
+            return False
+        for i, p_name in enumerate(available):
+            if used[i] or not p_name:
+                continue
+            if p_name == query or query in p_name:
+                used[i] = True
+                return True
+        return False
+
     def _resolve_player(self, name: str, year: int) -> dict:
         """Resolve a user-typed name to {'name', 'team', 'handicap_index'} against `year`'s roster.
         Case-insensitive exact match first, then unambiguous case-insensitive substring match
@@ -952,7 +1053,29 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             return json.dumps({"error": f"failed to create course {name!r}"})
         return json.dumps({"course": self.db_service.get_course(name.strip())}, default=_json_default)
 
-    def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None) -> str:
+    def _tool_update_course(self, name: str, par: Optional[int] = None,
+                             slope_rating: Optional[float] = None,
+                             course_rating: Optional[float] = None) -> str:
+        existing = self._resolve_course(name)
+        if "error" in existing:
+            return json.dumps(existing)
+
+        if par is None and slope_rating is None and course_rating is None:
+            return json.dumps({
+                "error": "no changes given - specify par, slope_rating, and/or course_rating",
+            })
+
+        new_par = int(par) if par is not None else existing["par"]
+        new_slope = float(slope_rating) if slope_rating is not None else existing["slope_rating"]
+        new_rating = float(course_rating) if course_rating is not None else existing["course_rating"]
+
+        ok = self.db_service.update_course(existing["name"], new_par, new_slope, new_rating)
+        if not ok:
+            return json.dumps({"error": f"failed to update course {existing['name']!r}"})
+        return json.dumps({"course": self.db_service.get_course(existing["name"])}, default=_json_default)
+
+    def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None,
+                              confirm_course_details: bool = False) -> str:
         year = int(year)
         day = int(day)
         matches = matches or []
@@ -966,6 +1089,22 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                 "message": f"No course matching {course!r} was found. Ask the admin for its par, "
                            f"slope rating, and course rating, then call create_course.",
             })
+
+        if not confirm_course_details:
+            return json.dumps({
+                "error": "confirm_course_details",
+                "course": {
+                    "name": course_info["name"], "par": course_info["par"],
+                    "slope_rating": course_info["slope_rating"], "course_rating": course_info["course_rating"],
+                },
+                "message": (
+                    f"Confirm with the admin that {course_info['name']}'s par ({course_info['par']}), "
+                    f"slope rating ({course_info['slope_rating']}), and course rating "
+                    f"({course_info['course_rating']}) are correct - these directly affect the computed "
+                    f"handicaps. If wrong, use update_course first. Once confirmed, call create_matches "
+                    f"again with confirm_course_details=true."
+                ),
+            }, default=_json_default)
 
         errors = []
         resolved_matches = []
@@ -1075,16 +1214,48 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         self.data_service.invalidate_cache()
         return json.dumps({"created": created}, default=_json_default)
 
-    def _tool_record_match_result(self, player_a: str, player_b: str, outcome: str,
-                                   score: Optional[str] = None, year: Optional[int] = None,
-                                   day: Optional[int] = None) -> str:
+    def _tool_record_match_result(self, player_a: Optional[str] = None, player_b: Optional[str] = None,
+                                   outcome: Optional[str] = None, score: Optional[str] = None,
+                                   year: Optional[int] = None, day: Optional[int] = None,
+                                   fourball_side_a: Optional[list] = None,
+                                   fourball_side_b: Optional[list] = None) -> str:
         if outcome not in ("player_a_won", "player_b_won", "half", "clear"):
             return json.dumps({"error": f"invalid outcome {outcome!r}"})
+
+        has_fourball_sides = bool(fourball_side_a) or bool(fourball_side_b)
+        has_individual = bool(player_a) or bool(player_b)
+        if has_fourball_sides and has_individual:
+            return json.dumps({
+                "error": "mixed_player_args",
+                "message": "Provide either player_a/player_b or fourball_side_a/fourball_side_b, not both.",
+            })
+
+        if has_fourball_sides:
+            fourball_side_a = list(dict.fromkeys(fourball_side_a or []))
+            fourball_side_b = list(dict.fromkeys(fourball_side_b or []))
+            if len(fourball_side_a) != 2 or len(fourball_side_b) != 2:
+                return json.dumps({
+                    "error": "invalid_fourball_sides",
+                    "message": "fourball_side_a and fourball_side_b must each list exactly 2 distinct players.",
+                })
+            display_a, display_b = " & ".join(fourball_side_a), " & ".join(fourball_side_b)
+        elif has_individual:
+            if not player_a or not player_b:
+                return json.dumps({
+                    "error": "missing_players",
+                    "message": "Both player_a and player_b are required in Singles/individual mode.",
+                })
+            display_a, display_b = player_a, player_b
+        else:
+            return json.dumps({
+                "error": "missing_players",
+                "message": "Provide player_a/player_b, or fourball_side_a/fourball_side_b for a fourball result.",
+            })
 
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({
-                "error": "no_pending_match", "player_a": player_a, "player_b": player_b,
+                "error": "no_pending_match", "player_a": display_a, "player_b": display_b,
                 "message": "There are no matches recorded at all.",
             })
 
@@ -1113,10 +1284,30 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                         return side
             return None
 
+        def _group_side_of(row, names):
+            """Like _side_of, but requires every name in `names` to match a distinct player
+            slot on the SAME side (used for fourball_side_a/fourball_side_b, so 2 partners
+            reported together resolve to their shared team rather than 2 separate opponents)."""
+            slots = {
+                "Blue": [row.get("BluePlayer1"), row.get("BluePlayer2")],
+                "Red": [row.get("RedPlayer1"), row.get("RedPlayer2")],
+            }
+            for side, players in slots.items():
+                available = [str(p or "").strip().lower() for p in players]
+                used = [False] * len(available)
+                if not all(self._claim_group_slot(name, available, used) for name in names):
+                    continue
+                return side
+            return None
+
+        def _resolve_sides(row):
+            if has_fourball_sides:
+                return _group_side_of(row, fourball_side_a), _group_side_of(row, fourball_side_b)
+            return _side_of(row, player_a), _side_of(row, player_b)
+
         candidates = []
         for _, row in subset.iterrows():
-            side_a = _side_of(row, player_a)
-            side_b = _side_of(row, player_b)
+            side_a, side_b = _resolve_sides(row)
             if side_a and side_b and side_a != side_b:
                 candidates.append(row)
 
@@ -1124,10 +1315,10 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             error_type = "no_result_to_clear" if is_clear else "no_pending_match"
             verb = "decided (non-pending)" if is_clear else "pending"
             return json.dumps({
-                "error": error_type, "player_a": player_a, "player_b": player_b,
+                "error": error_type, "player_a": display_a, "player_b": display_b,
                 "year": year, "day": day,
                 "message": (
-                    f"No {verb} match found where {player_a} and {player_b} are on opposite sides"
+                    f"No {verb} match found where {display_a} and {display_b} are on opposite sides"
                     + (f" for {year} day {day}" if year and day else "")
                     + ". Ask the admin to confirm the year/day, or the player names."
                 ),
@@ -1135,7 +1326,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
         if len(candidates) > 1:
             return json.dumps({
-                "error": "ambiguous_match", "player_a": player_a, "player_b": player_b,
+                "error": "ambiguous_match", "player_a": display_a, "player_b": display_b,
                 "candidates": [
                     {
                         "year": int(row["Year"]), "day": int(row["Day"]), "match_number": int(row["MatchNumber"]),
@@ -1148,7 +1339,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
         row = candidates[0]
         match_year, match_day, match_number = int(row["Year"]), int(row["Day"]), int(row["MatchNumber"])
-        side_a, side_b = _side_of(row, player_a), _side_of(row, player_b)
+        side_a, side_b = _resolve_sides(row)
 
         if is_clear:
             normalized_result, normalized_score = "", ""

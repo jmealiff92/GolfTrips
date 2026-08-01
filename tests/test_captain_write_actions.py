@@ -118,9 +118,24 @@ class CaptainWriteActionsTestCase(unittest.TestCase):
 
 
 class TestCreateMatches(CaptainWriteActionsTestCase):
-    def test_singles_happy_path(self):
+    def test_first_call_asks_to_confirm_course_details(self):
         payload = self._execute('create_matches', {
             'year': self.YEAR, 'day': 2, 'course': 'druids glen',
+            'matches': [{
+                'match_type': 'Singles',
+                'side_a_players': ['Jeff Smith'],
+                'side_b_players': ['Conor Byrne'],
+            }],
+        })
+        self.assertEqual(payload.get('error'), 'confirm_course_details')
+        self.assertEqual(payload['course']['name'], 'Druids Glen')
+        self.assertEqual(payload['course']['par'], 71)
+        self.assertEqual(payload['course']['slope_rating'], 128)
+        self.assertEqual(len(self.db_service.get_matches_by_year(self.YEAR)), 0)
+
+    def test_singles_happy_path(self):
+        payload = self._execute('create_matches', {
+            'year': self.YEAR, 'day': 2, 'course': 'druids glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -147,7 +162,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_fourball_happy_path_partial_name_match(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Fourball',
                 'side_a_players': ['Jeff', 'Jordan'],
@@ -164,7 +179,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_two_matches_batched_get_sequential_match_numbers(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Conor Byrne']},
                 {'match_type': 'Singles', 'side_a_players': ['Jordan Lee'], 'side_b_players': ['Ian Doyle']},
@@ -175,7 +190,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_team_color_mismatch_within_side_rejected(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Fourball',
                 'side_a_players': ['Jeff Smith', 'Conor Byrne'],
@@ -187,7 +202,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_same_team_both_sides_rejected(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -199,7 +214,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_unresolvable_player_name(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Nobody Here'],
@@ -214,7 +229,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
         self.db_service.add_or_update_handicap('Jeffrey Jones', self.YEAR, 18.0)
 
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff'],
@@ -227,7 +242,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
     def test_missing_handicap_blocks_creation(self):
         self.db_service.assign_player_team('No Handicap Guy', self.YEAR, 'Red')
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -239,7 +254,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_unknown_course_returns_course_not_found(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Nonexistent Links',
+            'year': self.YEAR, 'day': 2, 'course': 'Nonexistent Links', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -250,7 +265,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
 
     def test_batch_is_atomic_one_bad_match_creates_nothing(self):
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen',
+            'year': self.YEAR, 'day': 2, 'course': 'Druids Glen', 'confirm_course_details': True,
             'matches': [
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Conor Byrne']},
                 {'match_type': 'Singles', 'side_a_players': ['Jeff Smith'], 'side_b_players': ['Jordan Lee']},
@@ -266,7 +281,7 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
         self.assertIn('course', create_payload)
 
         payload = self._execute('create_matches', {
-            'year': self.YEAR, 'day': 2, 'course': 'New Links',
+            'year': self.YEAR, 'day': 2, 'course': 'New Links', 'confirm_course_details': True,
             'matches': [{
                 'match_type': 'Singles',
                 'side_a_players': ['Jeff Smith'],
@@ -281,6 +296,44 @@ class TestCreateMatches(CaptainWriteActionsTestCase):
             'name': 'druids glen', 'par': 72, 'slope_rating': 130, 'course_rating': 72.5,
         })
         self.assertIn('error', payload)
+
+
+class TestUpdateCourse(CaptainWriteActionsTestCase):
+    def test_update_single_field_leaves_others_unchanged(self):
+        payload = self._execute('update_course', {'name': 'druids glen', 'slope_rating': 132})
+        self.assertIn('course', payload)
+        self.assertEqual(payload['course']['slope_rating'], 132)
+        self.assertEqual(payload['course']['par'], 71)
+        self.assertEqual(payload['course']['course_rating'], 71.5)
+
+    def test_update_multiple_fields(self):
+        payload = self._execute('update_course', {
+            'name': 'Druids Glen', 'par': 72, 'course_rating': 72.5,
+        })
+        self.assertEqual(payload['course']['par'], 72)
+        self.assertEqual(payload['course']['course_rating'], 72.5)
+        self.assertEqual(payload['course']['slope_rating'], 128)  # unchanged
+
+    def test_no_fields_given_rejected(self):
+        payload = self._execute('update_course', {'name': 'Druids Glen'})
+        self.assertIn('error', payload)
+        matches = self.db_service.get_course('Druids Glen')
+        self.assertEqual(matches['slope_rating'], 128)  # unchanged
+
+    def test_unknown_course_rejected(self):
+        payload = self._execute('update_course', {'name': 'Nonexistent Links', 'par': 72})
+        self.assertEqual(payload.get('error'), 'not_found')
+
+    def test_ambiguous_course_name_rejected(self):
+        self.db_service.add_course('Druids Heath', 70, 125, 70.0)
+        payload = self._execute('update_course', {'name': 'Druids', 'par': 72})
+        self.assertEqual(payload.get('error'), 'ambiguous')
+
+    def test_partial_name_match_updates_correct_course(self):
+        payload = self._execute('update_course', {'name': 'Glen', 'par': 70})
+        self.assertIn('course', payload)
+        self.assertEqual(payload['course']['name'], 'Druids Glen')
+        self.assertEqual(payload['course']['par'], 70)
 
 
 class TestRecordMatchResult(CaptainWriteActionsTestCase):
@@ -462,6 +515,130 @@ class TestClearMatchResult(CaptainWriteActionsTestCase):
 
         other = self.db_service.get_matches_by_year(2025).iloc[0]
         self.assertEqual(other['Result'], 'Blue')  # untouched
+
+
+class TestRecordFourballMatchResult(CaptainWriteActionsTestCase):
+    """fourball_side_a/fourball_side_b - reporting a result as pairing vs pairing rather than
+    two individual opponents (which the tool can't use, since it expects opponents not partners)."""
+
+    def _add_fourball_match(self, year, day, match_number=1, blue=('Jeff Smith', 'Jordan Lee'),
+                             red=('Conor Byrne', 'Ian Doyle'), result='', score=''):
+        self.db_service.add_match(
+            year=year, day=day, match_number=match_number,
+            course='Druids Glen', match_type='Fourball',
+            blue_player1=blue[0], blue_player1_handicap=0,
+            blue_player2=blue[1], blue_player2_handicap=0,
+            red_player1=red[0], red_player1_handicap=0,
+            red_player2=red[1], red_player2_handicap=0,
+            result=result, score=score,
+        )
+        self.data_service.invalidate_cache()
+
+    def test_side_a_wins_recorded_on_blue(self):
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'player_a_won', 'score': '2&1',
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['result'], 'Blue')
+        self.assertEqual(payload['updated']['score'], '2&1')
+
+    def test_side_b_wins_recorded_on_red(self):
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'player_b_won', 'score': '1UP',
+        })
+        self.assertEqual(payload['updated']['result'], 'Red')
+
+    def test_half_forces_a_s(self):
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'half',
+        })
+        self.assertEqual(payload['updated']['result'], 'Half')
+        self.assertEqual(payload['updated']['score'], 'A/S')
+
+    def test_partial_first_names_still_resolve(self):
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff', 'Jordan'],
+            'fourball_side_b': ['Conor', 'Ian'],
+            'outcome': 'player_a_won', 'score': '3&2',
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['result'], 'Blue')
+
+    def test_side_order_does_not_matter(self):
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Conor Byrne', 'Ian Doyle'],
+            'fourball_side_b': ['Jeff Smith', 'Jordan Lee'],
+            'outcome': 'player_a_won', 'score': '1UP',
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['result'], 'Red')
+
+    def test_partners_reported_as_opponents_does_not_match(self):
+        # These two are partners (both Blue) in the fixture match below, not opponents - a
+        # fourball_side pairing that splits actual partners across the two sides shouldn't match.
+        self._add_fourball_match(self.YEAR, 2)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Conor Byrne'],
+            'fourball_side_b': ['Jordan Lee', 'Ian Doyle'],
+            'outcome': 'player_a_won', 'score': '1UP',
+        })
+        self.assertEqual(payload.get('error'), 'no_pending_match')
+
+    def test_invalid_fourball_sides_length_rejected(self):
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'player_a_won', 'score': '1UP',
+        })
+        self.assertEqual(payload.get('error'), 'invalid_fourball_sides')
+
+    def test_mixed_player_args_rejected(self):
+        payload = self._execute('record_match_result', {
+            'player_a': 'Jeff Smith',
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'player_a_won', 'score': '1UP',
+        })
+        self.assertEqual(payload.get('error'), 'mixed_player_args')
+
+    def test_no_players_given_rejected(self):
+        payload = self._execute('record_match_result', {'outcome': 'player_a_won', 'score': '1UP'})
+        self.assertEqual(payload.get('error'), 'missing_players')
+
+    def test_ambiguous_across_multiple_pending_fourballs(self):
+        self._add_fourball_match(2025, 1, match_number=1)
+        self._add_fourball_match(2026, 2, match_number=1)
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'player_a_won', 'score': '1UP',
+        })
+        self.assertEqual(payload.get('error'), 'ambiguous_match')
+        self.assertEqual(len(payload['candidates']), 2)
+
+    def test_clear_fourball_result(self):
+        self._add_fourball_match(self.YEAR, 2, result='Blue', score='2&1')
+        payload = self._execute('record_match_result', {
+            'fourball_side_a': ['Jeff Smith', 'Jordan Lee'],
+            'fourball_side_b': ['Conor Byrne', 'Ian Doyle'],
+            'outcome': 'clear',
+        })
+        self.assertIn('updated', payload)
+        self.assertEqual(payload['updated']['result'], '')
+
+        row = self.db_service.get_matches_by_year(self.YEAR).iloc[0]
+        self.assertEqual(row['Result'], '')
 
 
 if __name__ == '__main__':
