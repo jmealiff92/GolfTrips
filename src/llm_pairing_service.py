@@ -365,38 +365,68 @@ class PairingSuggester:
             "name": "record_match_result",
             "description": (
                 "Record the result of a match from a natural-language report like 'Jeff beat Conor 1up' "
-                "or 'Ian lost to Jordan 1 down'. player_a/player_b are just the two players named in the "
-                "message, in any order; `outcome` says which of them actually won (or 'half' if halved/"
-                "all square) - always work out the winner yourself before calling. Always normalize "
-                "`score` to the WINNING player's margin in the format '1UP', '3&2', etc, regardless of "
-                "how the admin phrased it - e.g. 'Ian lost to Jordan 1 down' means Jordan won by 1, so "
-                "call this with player_a='Ian', player_b='Jordan', outcome='player_b_won', "
-                "score='1UP' (NOT '1 down' and NOT attached to Ian). If the admin didn't state a score "
-                "at all, omit the `score` argument entirely rather than guessing - the tool will return "
-                "a 'score_required'/'invalid_score' error so you can ask the admin for it; if they say "
-                "they don't know or can't provide one, call again with score='Unknown'. Halved matches "
-                "always record as score 'A/S' automatically - you don't need to pass a score for "
-                "outcome='half'. If the admin didn't state a year/day, omit them and this tool searches "
-                "for the one pending (not yet decided) match where these two players are on opposite "
-                "sides; if it finds none ('no_pending_match') or more than one ('ambiguous_match'), it "
-                "returns what it found so you can ask the admin to confirm the match (e.g. by year/day) "
-                "rather than guessing. To undo a result that was recorded incorrectly (e.g. 'clear the "
-                "result for Jeff vs Conor', 'that was wrong, they haven't played yet'), call this with "
-                "outcome='clear' - it searches decided (non-pending) matches instead of pending ones for "
-                "these two players, resets the match back to pending (no result, no score), and you don't "
-                "need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies if it "
-                "can't find exactly one match to clear."
+                "or 'Ian lost to Jordan 1 down'. For SINGLES (or to identify a match by just one player "
+                "from each side), use player_a/player_b - just the two players named in the message, in "
+                "any order; `outcome` says which of them actually won (or 'half' if halved/all square) - "
+                "always work out the winner yourself before calling. For FOURBALL results reported as a "
+                "pairing vs pairing (e.g. 'Jeff & Jordan beat Conor & Ian 2&1', 'Ralph & Andy halved with "
+                "Matty & Neville'), use fourball_side_a/fourball_side_b INSTEAD - each a list of exactly "
+                "the 2 partners on that side - and never call this twice with individual names for a "
+                "Fourball result: the tool expects player_a/player_b to be OPPONENTS, not partners, so two "
+                "separate single-name calls won't find the match. Provide either player_a+player_b OR "
+                "fourball_side_a+fourball_side_b, never both. In fourball mode `outcome` still refers to "
+                "fourball_side_a ('player_a_won' = side_a won) / fourball_side_b ('player_b_won' = side_b "
+                "won). Always normalize `score` to the WINNING side's margin in the format '1UP', '3&2', "
+                "etc, regardless of how the admin phrased it - e.g. 'Ian lost to Jordan 1 down' means "
+                "Jordan won by 1, so call this with player_a='Ian', player_b='Jordan', "
+                "outcome='player_b_won', score='1UP' (NOT '1 down' and NOT attached to Ian). If the admin "
+                "didn't state a score at all, omit the `score` argument entirely rather than guessing - "
+                "the tool will return a 'score_required'/'invalid_score' error so you can ask the admin "
+                "for it; if they say they don't know or can't provide one, call again with "
+                "score='Unknown'. Halved matches always record as score 'A/S' automatically - you don't "
+                "need to pass a score for outcome='half'. If the admin didn't state a year/day, omit them "
+                "and this tool searches for the one pending (not yet decided) match where these players "
+                "are on opposite sides; if it finds none ('no_pending_match') or more than one "
+                "('ambiguous_match'), it returns what it found so you can ask the admin to confirm the "
+                "match (e.g. by year/day) rather than guessing. To undo a result that was recorded "
+                "incorrectly (e.g. 'clear the result for Jeff vs Conor', 'that was wrong, they haven't "
+                "played yet'), call this with outcome='clear' (same player_a/player_b or "
+                "fourball_side_a/fourball_side_b rules apply) - it searches decided (non-pending) matches "
+                "instead of pending ones, resets the match back to pending (no result, no score), and you "
+                "don't need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies "
+                "if it can't find exactly one match to clear."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "player_a": {"type": "string"},
-                    "player_b": {"type": "string"},
+                    "player_a": {
+                        "type": "string",
+                        "description": "Singles mode: one player. Omit if using fourball_side_a/fourball_side_b instead.",
+                    },
+                    "player_b": {
+                        "type": "string",
+                        "description": "Singles mode: one player. Omit if using fourball_side_a/fourball_side_b instead.",
+                    },
+                    "fourball_side_a": {
+                        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+                        "description": (
+                            "Fourball mode: both partners on one side, e.g. ['Jeff', 'Jordan']. Use with "
+                            "fourball_side_b instead of player_a/player_b."
+                        ),
+                    },
+                    "fourball_side_b": {
+                        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+                        "description": (
+                            "Fourball mode: both partners on the other side. Use with fourball_side_a "
+                            "instead of player_a/player_b."
+                        ),
+                    },
                     "outcome": {
                         "type": "string", "enum": ["player_a_won", "player_b_won", "half", "clear"],
                         "description": (
-                            "Which player won, 'half' if the match was halved, or 'clear' to undo an "
-                            "incorrectly-recorded result and reset the match back to pending."
+                            "Which side won - player_a/fourball_side_a vs player_b/fourball_side_b - "
+                            "'half' if halved, or 'clear' to undo an incorrectly-recorded result and "
+                            "reset the match back to pending."
                         ),
                     },
                     "score": {
@@ -406,7 +436,7 @@ class PairingSuggester:
                     "year": {"type": "integer", "description": "Omit unless the admin stated it."},
                     "day": {"type": "integer", "description": "Omit unless the admin stated it."},
                 },
-                "required": ["player_a", "player_b", "outcome"],
+                "required": ["outcome"],
             },
         },
     ]
@@ -680,7 +710,11 @@ them and let the tool search for the one pending match between the two named pla
 confirm the match/year/day rather than guessing which one they mean or silently picking the first result. \
 If the admin says a result was entered wrong and wants it undone (e.g. "clear that result", "they haven't \
 actually played yet", "I recorded that incorrectly"), call record_match_result with outcome="clear" for \
-the two players - it resets the match back to pending (no result, no score) and you don't need a `score`.
+the two players - it resets the match back to pending (no result, no score) and you don't need a `score`. \
+For a FOURBALL result reported as a pairing vs pairing (e.g. "Jeff & Jordan beat Conor & Ian 2&1"), use \
+fourball_side_a/fourball_side_b instead of player_a/player_b - never make two separate record_match_result \
+calls with individual names for a fourball result, since the tool expects player_a/player_b to be \
+opponents, not partners, so it won't find the match that way.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -927,6 +961,23 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             pass
         return value
 
+    @staticmethod
+    def _claim_group_slot(name: str, available: list, used: list) -> bool:
+        """Try to match `name` (case-insensitive exact-or-substring) against one not-yet-claimed
+        entry in `available`, marking it used in place. Returns whether a slot was claimed - used
+        by _group_side_of to confirm every member of a fourball pairing maps to a distinct player
+        slot on the same side, rather than two names matching the same slot."""
+        query = (name or "").strip().lower()
+        if not query:
+            return False
+        for i, p_name in enumerate(available):
+            if used[i] or not p_name:
+                continue
+            if p_name == query or query in p_name:
+                used[i] = True
+                return True
+        return False
+
     def _resolve_player(self, name: str, year: int) -> dict:
         """Resolve a user-typed name to {'name', 'team', 'handicap_index'} against `year`'s roster.
         Case-insensitive exact match first, then unambiguous case-insensitive substring match
@@ -1163,16 +1214,48 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         self.data_service.invalidate_cache()
         return json.dumps({"created": created}, default=_json_default)
 
-    def _tool_record_match_result(self, player_a: str, player_b: str, outcome: str,
-                                   score: Optional[str] = None, year: Optional[int] = None,
-                                   day: Optional[int] = None) -> str:
+    def _tool_record_match_result(self, player_a: Optional[str] = None, player_b: Optional[str] = None,
+                                   outcome: Optional[str] = None, score: Optional[str] = None,
+                                   year: Optional[int] = None, day: Optional[int] = None,
+                                   fourball_side_a: Optional[list] = None,
+                                   fourball_side_b: Optional[list] = None) -> str:
         if outcome not in ("player_a_won", "player_b_won", "half", "clear"):
             return json.dumps({"error": f"invalid outcome {outcome!r}"})
+
+        has_fourball_sides = bool(fourball_side_a) or bool(fourball_side_b)
+        has_individual = bool(player_a) or bool(player_b)
+        if has_fourball_sides and has_individual:
+            return json.dumps({
+                "error": "mixed_player_args",
+                "message": "Provide either player_a/player_b or fourball_side_a/fourball_side_b, not both.",
+            })
+
+        if has_fourball_sides:
+            fourball_side_a = list(dict.fromkeys(fourball_side_a or []))
+            fourball_side_b = list(dict.fromkeys(fourball_side_b or []))
+            if len(fourball_side_a) != 2 or len(fourball_side_b) != 2:
+                return json.dumps({
+                    "error": "invalid_fourball_sides",
+                    "message": "fourball_side_a and fourball_side_b must each list exactly 2 distinct players.",
+                })
+            display_a, display_b = " & ".join(fourball_side_a), " & ".join(fourball_side_b)
+        elif has_individual:
+            if not player_a or not player_b:
+                return json.dumps({
+                    "error": "missing_players",
+                    "message": "Both player_a and player_b are required in Singles/individual mode.",
+                })
+            display_a, display_b = player_a, player_b
+        else:
+            return json.dumps({
+                "error": "missing_players",
+                "message": "Provide player_a/player_b, or fourball_side_a/fourball_side_b for a fourball result.",
+            })
 
         df = self.data_service.df
         if df is None or df.empty:
             return json.dumps({
-                "error": "no_pending_match", "player_a": player_a, "player_b": player_b,
+                "error": "no_pending_match", "player_a": display_a, "player_b": display_b,
                 "message": "There are no matches recorded at all.",
             })
 
@@ -1201,10 +1284,30 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
                         return side
             return None
 
+        def _group_side_of(row, names):
+            """Like _side_of, but requires every name in `names` to match a distinct player
+            slot on the SAME side (used for fourball_side_a/fourball_side_b, so 2 partners
+            reported together resolve to their shared team rather than 2 separate opponents)."""
+            slots = {
+                "Blue": [row.get("BluePlayer1"), row.get("BluePlayer2")],
+                "Red": [row.get("RedPlayer1"), row.get("RedPlayer2")],
+            }
+            for side, players in slots.items():
+                available = [str(p or "").strip().lower() for p in players]
+                used = [False] * len(available)
+                if not all(self._claim_group_slot(name, available, used) for name in names):
+                    continue
+                return side
+            return None
+
+        def _resolve_sides(row):
+            if has_fourball_sides:
+                return _group_side_of(row, fourball_side_a), _group_side_of(row, fourball_side_b)
+            return _side_of(row, player_a), _side_of(row, player_b)
+
         candidates = []
         for _, row in subset.iterrows():
-            side_a = _side_of(row, player_a)
-            side_b = _side_of(row, player_b)
+            side_a, side_b = _resolve_sides(row)
             if side_a and side_b and side_a != side_b:
                 candidates.append(row)
 
@@ -1212,10 +1315,10 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             error_type = "no_result_to_clear" if is_clear else "no_pending_match"
             verb = "decided (non-pending)" if is_clear else "pending"
             return json.dumps({
-                "error": error_type, "player_a": player_a, "player_b": player_b,
+                "error": error_type, "player_a": display_a, "player_b": display_b,
                 "year": year, "day": day,
                 "message": (
-                    f"No {verb} match found where {player_a} and {player_b} are on opposite sides"
+                    f"No {verb} match found where {display_a} and {display_b} are on opposite sides"
                     + (f" for {year} day {day}" if year and day else "")
                     + ". Ask the admin to confirm the year/day, or the player names."
                 ),
@@ -1223,7 +1326,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
         if len(candidates) > 1:
             return json.dumps({
-                "error": "ambiguous_match", "player_a": player_a, "player_b": player_b,
+                "error": "ambiguous_match", "player_a": display_a, "player_b": display_b,
                 "candidates": [
                     {
                         "year": int(row["Year"]), "day": int(row["Day"]), "match_number": int(row["MatchNumber"]),
@@ -1236,7 +1339,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
         row = candidates[0]
         match_year, match_day, match_number = int(row["Year"]), int(row["Day"]), int(row["MatchNumber"])
-        side_a, side_b = _side_of(row, player_a), _side_of(row, player_b)
+        side_a, side_b = _resolve_sides(row)
 
         if is_clear:
             normalized_result, normalized_score = "", ""
