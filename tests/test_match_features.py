@@ -27,7 +27,7 @@ def test_duplicate_match_validation():
     print("\n1. Adding initial match (Year 2024, Day 1, Match 1)...")
     success = db.add_match(
         year=2024, day=1, match_number=1,
-        course="Test Course", match_type="Single",
+        course="Test Course", match_type="Singles",
         blue_player1="Player A", blue_player1_handicap=0,
         blue_player2=None, blue_player2_handicap=None,
         red_player1="Player B", red_player1_handicap=5,
@@ -44,7 +44,7 @@ def test_duplicate_match_validation():
     print("\n2. Attempting to add duplicate match (same Year/Day/Match)...")
     success = db.add_match(
         year=2024, day=1, match_number=1,
-        course="Test Course", match_type="Single",
+        course="Test Course", match_type="Singles",
         blue_player1="Player B", blue_player1_handicap=0,
         blue_player2=None, blue_player2_handicap=None,
         red_player1="Player A", red_player1_handicap=5,
@@ -57,7 +57,7 @@ def test_duplicate_match_validation():
     print("\n3. Adding match with different match number (Match 2)...")
     success = db.add_match(
         year=2024, day=1, match_number=2,
-        course="Test Course", match_type="Single",
+        course="Test Course", match_type="Singles",
         blue_player1="Player B", blue_player1_handicap=0,
         blue_player2=None, blue_player2_handicap=None,
         red_player1="Player A", red_player1_handicap=5,
@@ -70,7 +70,7 @@ def test_duplicate_match_validation():
     print("\n4. Adding match with same number but different day (Day 2)...")
     success = db.add_match(
         year=2024, day=2, match_number=1,
-        course="Test Course", match_type="Single",
+        course="Test Course", match_type="Singles",
         blue_player1="Player B", blue_player1_handicap=0,
         blue_player2=None, blue_player2_handicap=None,
         red_player1="Player A", red_player1_handicap=5,
@@ -110,7 +110,7 @@ def test_delete_match():
     for i in range(1, 4):
         db.add_match(
             year=2024, day=1, match_number=i,
-            course="Test Course", match_type="Single",
+            course="Test Course", match_type="Singles",
             blue_player1="Player A", blue_player1_handicap=0,
             blue_player2=None, blue_player2_handicap=None,
             red_player1="Player B", red_player1_handicap=5,

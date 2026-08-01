@@ -136,7 +136,7 @@ class TestHandicapCalculator(unittest.TestCase):
     def test_complete_singles_calculation(self):
         """Test complete singles calculation from indexes"""
         result = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=10.5,
             handicap_index_p2=None,
             handicap_index_p3=15.2,
@@ -191,7 +191,7 @@ class TestHandicapCalculator(unittest.TestCase):
         """Test calculations with scratch player (0 handicap)"""
         # Singles
         result = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=0.0,
             handicap_index_p2=None,
             handicap_index_p3=10.0,
@@ -205,7 +205,7 @@ class TestHandicapCalculator(unittest.TestCase):
     def test_plus_handicap(self):
         """Test calculations with plus handicap (negative)"""
         result = HandicapCalculator.calculate_match_handicaps(
-            match_type='Single',
+            match_type='Singles',
             handicap_index_p1=-2.0,
             handicap_index_p2=None,
             handicap_index_p3=5.0,

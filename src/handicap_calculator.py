@@ -124,7 +124,7 @@ class HandicapCalculator:
         - Fourball: 85% allowance
 
         Args:
-            match_type: 'Single' or 'Fourball'
+            match_type: 'Singles' or 'Fourball'
             handicap_index_p1: Player 1 handicap index (Team 1)
             handicap_index_p2: Player 2 handicap index (Team 1) - None for singles
             handicap_index_p3: Player 3 handicap index (Team 2)
@@ -136,7 +136,7 @@ class HandicapCalculator:
             For Singles: (p1_match_hcp, p3_match_hcp)
             For Fourball: (p1_match_hcp, p2_match_hcp, p3_match_hcp, p4_match_hcp)
         """
-        if match_type == 'Single':
+        if match_type == 'Singles':
             # Calculate course handicaps
             ch_p1 = HandicapCalculator.calculate_course_handicap(
                 handicap_index_p1, slope_rating, par)
