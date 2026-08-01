@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.db_service import get_database_service
 from src.data_service import DataService
 from src.handicap_calculator import HandicapCalculator
+from src.match_score import validate_result_score
 from src.auth import init_oauth, is_authenticated, get_current_user_email, is_admin
 from src.llm_pairing_service import PairingSuggester, PairingSuggestionError
 
@@ -1342,7 +1343,9 @@ def create_suggest_pairings_page():
         html.P(
             "Pick a team's available players for the day and Claude will suggest fourball partnerships, "
             "based on individual performance, historical partner synergy, and handicaps. You can also just "
-            "chat below and ask Captain Claude anything about the trip's matches, players, or courses.",
+            "chat below and ask Captain Claude anything about the trip's matches, players, or courses - or "
+            "tell it to create matches (e.g. \"create the 2026 day 2 matches at Druids Glen: Jeff & Jordan "
+            "vs Conor & Ian\") or record results (e.g. \"Jeff beat Conor 1up\").",
             className='text-muted', style={'textAlign': 'center', 'marginBottom': '30px'}
         ),
 
@@ -1393,9 +1396,9 @@ def create_suggest_pairings_page():
             dbc.CardBody([
                 html.H4("Chat with Captain Claude", className='mb-3'),
                 html.P(
-                    "Ask about these players, propose your own pairing and get feedback, or ask any "
-                    "open-ended stats question — tightest matches, toughest opposition, course records, "
-                    "and more. No need to generate suggestions first.",
+                    "Ask about these players, propose your own pairing and get feedback, ask any "
+                    "open-ended stats question, or tell Captain Claude to create matches or record "
+                    "results. No need to generate suggestions first.",
                     className='text-muted', style={'marginBottom': '15px'}
                 ),
                 ChatComponent(
@@ -1770,6 +1773,10 @@ def add_match(n_clicks, year, day, match_number, course, new_course, match_type,
         blue_p2_hcp = None
         red_p2 = None
         red_p2_hcp = None
+
+    ok, result, score, error_message = validate_result_score(result, score)
+    if not ok:
+        return dbc.Alert(error_message, color="danger", dismissable=True, duration=6000)
 
     # Add match to database
     success = db_service.add_match(
@@ -2959,12 +2966,20 @@ def toggle_edit_modal(selected_rows, close_clicks, save_clicks, delete_clicks, t
 
         import json
         match_info = json.loads(stored_match)
+
+        ok, normalized_result, normalized_score, error_message = validate_result_score(
+            result_value, score_value
+        )
+        if not ok:
+            alert = dbc.Alert(error_message, color="danger", dismissable=True, duration=6000)
+            return True, no_update, result_value, score_value, stored_match, alert
+
         success = db_service.update_match_result(
             match_info['Year'],
             match_info['Day'],
             match_info['MatchNumber'],
-            result_value or '',
-            score_value or ''
+            normalized_result,
+            normalized_score
         )
         data_service.invalidate_cache()
 
