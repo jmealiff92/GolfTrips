@@ -3,14 +3,16 @@ LLM-based fourball partner suggestions and open-ended trip stats chat ("Captain 
 
 Given a team's available players for a day, asks Claude to split them into
 pairs using each player's individual Fourball record, historical partner
-synergy, and handicaps. Advisory only - callers still create matches
-manually via the existing Add Match flow.
+synergy, and handicaps.
 
 Beyond pairing suggestions, the chat also gives Claude tool access to query
 match-by-match results (including score margins, to judge how tight a match
 was), head-to-head records, partner history, and course performance, so it
 can answer open-ended stats questions rather than only what's pre-baked into
-the prompt context.
+the prompt context. Claude also has write tools to create matches and record
+match results directly from natural-language requests (e.g. "create the 2026
+day 2 matches at Druids Glen: Jeff & Jordan vs Conor & Ian", "Jeff beat Conor
+1up") - see create_matches, create_course, and record_match_result below.
 """
 import json
 import logging
@@ -19,6 +21,10 @@ import re
 from typing import Optional
 
 import anthropic
+import pandas as pd
+
+from src.handicap_calculator import HandicapCalculator
+from src.match_score import validate_result_score
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +69,8 @@ VALID_MATCH_TYPES = ("Singles", "Fourball")
 
 
 class PairingSuggester:
-    """Uses the Claude API to suggest fourball partnerships and answer stats questions for one team."""
+    """Uses the Claude API to suggest fourball partnerships, answer stats questions, and - via the
+    create_matches/create_course/record_match_result tools - create matches and record results."""
 
     TOOLS = [
         {
@@ -248,6 +255,121 @@ class PairingSuggester:
             "name": "get_all_players",
             "description": "Full roster of every player registered in the system (Manage Players page), not limited to those with recorded matches.",
             "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "create_matches",
+            "description": (
+                "Create one or more matches for a specific year/day/course, e.g. from a message like "
+                "'create the 2026 day 2 matches at druids glen: Jeff & Jordan vs Conor & Ian'. year, "
+                "day, and course are REQUIRED - never guess any of them; ask the admin if any is "
+                "missing from their message. Batch every match mentioned in one message into a single "
+                "call (the `matches` list) so they're all created together, or none are if any of them "
+                "fails validation. Each match's two sides don't need to specify team colors - just name "
+                "the players; this tool resolves each player's actual Blue/Red team from that year's "
+                "roster (case-insensitive, allows an unambiguous partial/first name), and rejects the "
+                "match if a side mixes teams, both sides are the same team, or a name doesn't match "
+                "exactly one player on that year's roster. If it returns a 'course_not_found' error, "
+                "ask the admin for the course's par, slope rating, and course rating, call create_course "
+                "with those, then retry create_matches. If it returns 'validation_failed', relay the "
+                "listed problems to the admin and ask them to clarify rather than guessing. Handicaps "
+                "are computed automatically the same way the Add Match page does - never pass or ask "
+                "for them yourself."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "year": {"type": "integer", "description": "Trip year, e.g. 2026. Required - never guess."},
+                    "day": {"type": "integer", "description": "Day number within the trip, e.g. 2. Required - never guess."},
+                    "course": {"type": "string", "description": "Course name. Required - never guess."},
+                    "matches": {
+                        "type": "array",
+                        "description": "Every match to create in this batch.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "match_type": {"type": "string", "enum": list(VALID_MATCH_TYPES)},
+                                "side_a_players": {
+                                    "type": "array", "items": {"type": "string"},
+                                    "description": "1 player for Singles, 2 for Fourball.",
+                                },
+                                "side_b_players": {
+                                    "type": "array", "items": {"type": "string"},
+                                    "description": "1 player for Singles, 2 for Fourball.",
+                                },
+                            },
+                            "required": ["match_type", "side_a_players", "side_b_players"],
+                        },
+                    },
+                },
+                "required": ["year", "day", "course", "matches"],
+            },
+        },
+        {
+            "name": "create_course",
+            "description": (
+                "Create a new course record so it can be used by create_matches. Only call this after "
+                "create_matches has returned a 'course_not_found' error for that name, and after you've "
+                "asked the admin for the course's par, slope rating, and course rating - never guess "
+                "those values."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "par": {"type": "integer"},
+                    "slope_rating": {"type": "number"},
+                    "course_rating": {"type": "number"},
+                },
+                "required": ["name", "par", "slope_rating", "course_rating"],
+            },
+        },
+        {
+            "name": "record_match_result",
+            "description": (
+                "Record the result of a match from a natural-language report like 'Jeff beat Conor 1up' "
+                "or 'Ian lost to Jordan 1 down'. player_a/player_b are just the two players named in the "
+                "message, in any order; `outcome` says which of them actually won (or 'half' if halved/"
+                "all square) - always work out the winner yourself before calling. Always normalize "
+                "`score` to the WINNING player's margin in the format '1UP', '3&2', etc, regardless of "
+                "how the admin phrased it - e.g. 'Ian lost to Jordan 1 down' means Jordan won by 1, so "
+                "call this with player_a='Ian', player_b='Jordan', outcome='player_b_won', "
+                "score='1UP' (NOT '1 down' and NOT attached to Ian). If the admin didn't state a score "
+                "at all, omit the `score` argument entirely rather than guessing - the tool will return "
+                "a 'score_required'/'invalid_score' error so you can ask the admin for it; if they say "
+                "they don't know or can't provide one, call again with score='Unknown'. Halved matches "
+                "always record as score 'A/S' automatically - you don't need to pass a score for "
+                "outcome='half'. If the admin didn't state a year/day, omit them and this tool searches "
+                "for the one pending (not yet decided) match where these two players are on opposite "
+                "sides; if it finds none ('no_pending_match') or more than one ('ambiguous_match'), it "
+                "returns what it found so you can ask the admin to confirm the match (e.g. by year/day) "
+                "rather than guessing. To undo a result that was recorded incorrectly (e.g. 'clear the "
+                "result for Jeff vs Conor', 'that was wrong, they haven't played yet'), call this with "
+                "outcome='clear' - it searches decided (non-pending) matches instead of pending ones for "
+                "these two players, resets the match back to pending (no result, no score), and you don't "
+                "need to pass `score`. Same 'no_result_to_clear'/'ambiguous_match' handling applies if it "
+                "can't find exactly one match to clear."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "player_a": {"type": "string"},
+                    "player_b": {"type": "string"},
+                    "outcome": {
+                        "type": "string", "enum": ["player_a_won", "player_b_won", "half", "clear"],
+                        "description": (
+                            "Which player won, 'half' if the match was halved, or 'clear' to undo an "
+                            "incorrectly-recorded result and reset the match back to pending."
+                        ),
+                    },
+                    "score": {
+                        "type": "string",
+                        "description": "Winner's margin, e.g. '1UP', '3&2', or 'Unknown'. Omit if the admin didn't state one.",
+                    },
+                    "year": {"type": "integer", "description": "Omit unless the admin stated it."},
+                    "day": {"type": "integer", "description": "Omit unless the admin stated it."},
+                },
+                "required": ["player_a", "player_b", "outcome"],
+            },
         },
     ]
 
@@ -483,6 +605,33 @@ differ, with no year given or inferable from context - ask which year (or confir
 instead of picking one silently.
 Never ask about things covered by a default above (match type, which team, etc.) - only ask when \
 answering without asking would risk stating something false.
+
+CREATING MATCHES - you can create matches directly with the create_matches tool, e.g. from "create the \
+2026 day 2 matches at druids glen: Jeff & Jordan vs Conor & Ian, Ralph & Andy vs Matty & Neville". Year, \
+day, and course are REQUIRED inputs to that tool - if the admin's message is missing any of them, ask \
+for it before calling the tool; never guess or default them (not even to "today" or "the current trip \
+year"). Batch every match from one message into a single create_matches call. You don't need to work out \
+Blue/Red team colors yourself - just pass the named players for each side and the tool resolves their \
+actual team from that year's roster, rejecting the match if partners aren't on the same team or the two \
+sides are the same team; relay any 'validation_failed' problems to the admin plainly and ask them to \
+clarify rather than retrying with a guess. If create_matches returns 'course_not_found', ask the admin \
+for that course's par, slope rating, and course rating, call create_course with those values, then retry \
+create_matches - never invent course data yourself. Never pass or estimate handicaps yourself; the tool \
+computes them the same way the Add Match page does.
+
+RECORDING MATCH RESULTS - you can record a result directly with record_match_result, e.g. from "Jeff \
+beat Conor 1up" or "Ian lost to Jordan 1 down". Work out who actually won before calling: always express \
+the score as the WINNER's margin (e.g. "1 down" for the loser becomes score="1UP" attached to the winner \
+via `outcome`), never leave it framed from the loser's side. If the admin didn't state a score, omit the \
+`score` argument and ask them for it once the tool confirms it's needed; if they say they don't know or \
+can't provide one, call again with score="Unknown". Halved matches are automatic - score always ends up \
+"A/S", you don't need to supply one for outcome="half". If the admin didn't mention a year or day, omit \
+them and let the tool search for the one pending match between the two named players; if it comes back \
+'no_pending_match' or 'ambiguous_match', tell the admin what you found (or didn't) and ask them to \
+confirm the match/year/day rather than guessing which one they mean or silently picking the first result. \
+If the admin says a result was entered wrong and wants it undone (e.g. "clear that result", "they haven't \
+actually played yet", "I recorded that incorrectly"), call record_match_result with outcome="clear" for \
+the two players - it resets the match back to pending (no result, no score) and you don't need a `score`.
 """
 
     def _build_suggestion_prompt(self, team: str, year: int, players: list[str]) -> str:
@@ -589,6 +738,9 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
             "get_player_handicap_history": self._tool_get_player_handicap_history,
             "get_trip_years": self._tool_get_trip_years,
             "get_all_players": self._tool_get_all_players,
+            "create_matches": self._tool_create_matches,
+            "create_course": self._tool_create_course,
+            "record_match_result": self._tool_record_match_result,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -710,6 +862,324 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
 
     def _tool_get_all_players(self) -> str:
         return json.dumps({"players": self.db_service.get_all_players()}, default=_json_default)
+
+    @staticmethod
+    def _clean_handicap(value) -> Optional[float]:
+        """get_team_assignments_by_year LEFT JOINs handicaps, so a player with no handicap row for
+        that year comes back as NaN (not None) once it's passed through a DataFrame - normalize
+        both to None so 'missing handicap' checks work regardless of which one shows up."""
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+        return value
+
+    def _resolve_player(self, name: str, year: int) -> dict:
+        """Resolve a user-typed name to {'name', 'team', 'handicap_index'} against `year`'s roster.
+        Case-insensitive exact match first, then unambiguous case-insensitive substring match
+        (e.g. 'Jeff' -> 'Jeff Smith' if he's the only Jeff on the roster). On failure returns
+        {'error': 'not_found'|'ambiguous'|'no_roster', ...} for the caller to relay to Claude."""
+        roster = self.db_service.get_team_assignments_by_year(int(year))
+        if not roster:
+            return {
+                "error": "no_roster", "name": name, "year": year,
+                "message": f"No players are assigned to a team for {year}.",
+            }
+
+        query = (name or "").strip().lower()
+        exact = [p for p in roster if p["name"].strip().lower() == query]
+        if len(exact) == 1:
+            match = exact[0]
+            return {
+                "name": match["name"], "team": match["team"],
+                "handicap_index": self._clean_handicap(match.get("handicap_index")),
+            }
+        if len(exact) > 1:
+            return {"error": "ambiguous", "name": name, "candidates": [p["name"] for p in exact]}
+
+        partial = [p for p in roster if query and query in p["name"].strip().lower()]
+        if len(partial) == 1:
+            match = partial[0]
+            return {
+                "name": match["name"], "team": match["team"],
+                "handicap_index": self._clean_handicap(match.get("handicap_index")),
+            }
+        if len(partial) > 1:
+            return {"error": "ambiguous", "name": name, "candidates": [p["name"] for p in partial]}
+
+        return {
+            "error": "not_found", "name": name, "year": year,
+            "message": f"No player matching {name!r} is on the {year} roster.",
+        }
+
+    @staticmethod
+    def _describe_resolution_error(resolved: dict) -> str:
+        if resolved.get("error") == "ambiguous":
+            return f"{resolved['name']!r} matches multiple players: {', '.join(resolved.get('candidates', []))} - ask which one"
+        if resolved.get("error") in ("not_found", "no_roster"):
+            return resolved.get("message", f"couldn't resolve {resolved.get('name')!r}")
+        return str(resolved)
+
+    def _resolve_course(self, name: str) -> dict:
+        """Resolve a user-typed course name against the courses table, case-insensitive exact match
+        first then unambiguous substring match. Returns the course dict, or {'error': ...} on failure."""
+        courses = self.db_service.get_all_courses()
+        query = (name or "").strip().lower()
+        exact = [c for c in courses if c["name"].strip().lower() == query]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
+            return {"error": "ambiguous", "course": name, "candidates": [c["name"] for c in exact]}
+
+        partial = [c for c in courses if query and query in c["name"].strip().lower()]
+        if len(partial) == 1:
+            return partial[0]
+        if len(partial) > 1:
+            return {"error": "ambiguous", "course": name, "candidates": [c["name"] for c in partial]}
+
+        return {"error": "not_found", "course": name}
+
+    def _tool_create_course(self, name: str, par: int, slope_rating: float, course_rating: float) -> str:
+        courses = self.db_service.get_all_courses()
+        if any(c["name"].strip().lower() == (name or "").strip().lower() for c in courses):
+            return json.dumps({"error": f"a course named {name!r} already exists"})
+
+        ok = self.db_service.add_course(name.strip(), int(par), float(slope_rating), float(course_rating))
+        if not ok:
+            return json.dumps({"error": f"failed to create course {name!r}"})
+        return json.dumps({"course": self.db_service.get_course(name.strip())}, default=_json_default)
+
+    def _tool_create_matches(self, year: int, day: int, course: str, matches: Optional[list] = None) -> str:
+        year = int(year)
+        day = int(day)
+        matches = matches or []
+        if not matches:
+            return json.dumps({"error": "no matches given"})
+
+        course_info = self._resolve_course(course)
+        if "error" in course_info:
+            return json.dumps({
+                "error": "course_not_found", "course": course,
+                "message": f"No course matching {course!r} was found. Ask the admin for its par, "
+                           f"slope rating, and course rating, then call create_course.",
+            })
+
+        errors = []
+        resolved_matches = []
+        for i, m in enumerate(matches, start=1):
+            match_type = m.get("match_type")
+            if match_type not in VALID_MATCH_TYPES:
+                errors.append(f"match {i}: invalid match_type {match_type!r}")
+                continue
+
+            side_a = list(dict.fromkeys(m.get("side_a_players") or []))
+            side_b = list(dict.fromkeys(m.get("side_b_players") or []))
+            expected = 1 if match_type == "Singles" else 2
+            if len(side_a) != expected or len(side_b) != expected:
+                errors.append(
+                    f"match {i}: {match_type} needs {expected} player(s) per side "
+                    f"(got {len(side_a)} vs {len(side_b)})"
+                )
+                continue
+
+            resolved_a = [self._resolve_player(p, year) for p in side_a]
+            resolved_b = [self._resolve_player(p, year) for p in side_b]
+            bad = [r for r in resolved_a + resolved_b if "error" in r]
+            if bad:
+                for r in bad:
+                    errors.append(f"match {i}: {self._describe_resolution_error(r)}")
+                continue
+
+            all_names = [r["name"] for r in resolved_a + resolved_b]
+            if len(set(all_names)) != len(all_names):
+                errors.append(f"match {i}: the same player appears more than once")
+                continue
+
+            teams_a = {r["team"] for r in resolved_a}
+            teams_b = {r["team"] for r in resolved_b}
+            if len(teams_a) != 1 or len(teams_b) != 1:
+                errors.append(f"match {i}: partners must be on the same team ({side_a} / {side_b})")
+                continue
+            team_a, team_b = next(iter(teams_a)), next(iter(teams_b))
+            if team_a == team_b:
+                errors.append(
+                    f"match {i}: both sides are on team {team_a} - opponents must be on opposite teams"
+                )
+                continue
+
+            missing_hcp = [r["name"] for r in resolved_a + resolved_b if r.get("handicap_index") is None]
+            if missing_hcp:
+                errors.append(f"match {i}: no {year} handicap index on file for {', '.join(missing_hcp)}")
+                continue
+
+            blue, red = (resolved_a, resolved_b) if team_a == "Blue" else (resolved_b, resolved_a)
+            resolved_matches.append({"match_type": match_type, "blue": blue, "red": red})
+
+        if errors:
+            return json.dumps({"error": "validation_failed", "problems": errors})
+
+        created = []
+        for entry in resolved_matches:
+            blue, red = entry["blue"], entry["red"]
+            if entry["match_type"] == "Singles":
+                p1_hcp, p3_hcp = HandicapCalculator.calculate_match_handicaps(
+                    match_type="Singles",
+                    handicap_index_p1=blue[0]["handicap_index"], handicap_index_p2=None,
+                    handicap_index_p3=red[0]["handicap_index"], handicap_index_p4=None,
+                    slope_rating=course_info["slope_rating"], par=course_info["par"],
+                )
+                blue_hcp, red_hcp = [p1_hcp, None], [p3_hcp, None]
+            else:
+                p1_hcp, p2_hcp, p3_hcp, p4_hcp = HandicapCalculator.calculate_match_handicaps(
+                    match_type="Fourball",
+                    handicap_index_p1=blue[0]["handicap_index"], handicap_index_p2=blue[1]["handicap_index"],
+                    handicap_index_p3=red[0]["handicap_index"], handicap_index_p4=red[1]["handicap_index"],
+                    slope_rating=course_info["slope_rating"], par=course_info["par"],
+                )
+                blue_hcp, red_hcp = [p1_hcp, p2_hcp], [p3_hcp, p4_hcp]
+
+            match_number = self.db_service.get_next_match_number(year, day)
+            while self.db_service.check_match_exists(year, day, match_number):
+                match_number += 1
+
+            ok = self.db_service.add_match(
+                year=year, day=day, match_number=match_number,
+                course=course_info["name"], match_type=entry["match_type"],
+                blue_player1=blue[0]["name"], blue_player1_handicap=blue_hcp[0],
+                blue_player2=blue[1]["name"] if len(blue) > 1 else None, blue_player2_handicap=blue_hcp[1],
+                red_player1=red[0]["name"], red_player1_handicap=red_hcp[0],
+                red_player2=red[1]["name"] if len(red) > 1 else None, red_player2_handicap=red_hcp[1],
+                result="", score="",
+            )
+            if not ok:
+                created.append({
+                    "error": f"failed to save match {match_number} (Year {year}, Day {day}) - "
+                             f"it may already exist",
+                })
+                continue
+
+            created.append({
+                "year": year, "day": day, "match_number": match_number,
+                "course": course_info["name"], "match_type": entry["match_type"],
+                "blue_players": [
+                    {"name": p["name"], "handicap": h} for p, h in zip(blue, blue_hcp)
+                ],
+                "red_players": [
+                    {"name": p["name"], "handicap": h} for p, h in zip(red, red_hcp)
+                ],
+            })
+
+        self.data_service.invalidate_cache()
+        return json.dumps({"created": created}, default=_json_default)
+
+    def _tool_record_match_result(self, player_a: str, player_b: str, outcome: str,
+                                   score: Optional[str] = None, year: Optional[int] = None,
+                                   day: Optional[int] = None) -> str:
+        if outcome not in ("player_a_won", "player_b_won", "half", "clear"):
+            return json.dumps({"error": f"invalid outcome {outcome!r}"})
+
+        df = self.data_service.df
+        if df is None or df.empty:
+            return json.dumps({
+                "error": "no_pending_match", "player_a": player_a, "player_b": player_b,
+                "message": "There are no matches recorded at all.",
+            })
+
+        is_clear = outcome == "clear"
+        if is_clear:
+            subset = df[df["Result"].notna() & (df["Result"] != "")]
+        else:
+            subset = df[df["Result"].isna() | (df["Result"] == "")]
+        if year is not None:
+            subset = subset[subset["Year"] == int(year)]
+        if day is not None:
+            subset = subset[subset["Day"] == int(day)]
+
+        def _side_of(row, name):
+            query = (name or "").strip().lower()
+            if not query:
+                return None
+            slots = {
+                "Blue": [row.get("BluePlayer1"), row.get("BluePlayer2")],
+                "Red": [row.get("RedPlayer1"), row.get("RedPlayer2")],
+            }
+            for side, players in slots.items():
+                for p in players:
+                    p_name = str(p or "").strip().lower()
+                    if p_name and (p_name == query or query in p_name):
+                        return side
+            return None
+
+        candidates = []
+        for _, row in subset.iterrows():
+            side_a = _side_of(row, player_a)
+            side_b = _side_of(row, player_b)
+            if side_a and side_b and side_a != side_b:
+                candidates.append(row)
+
+        if not candidates:
+            error_type = "no_result_to_clear" if is_clear else "no_pending_match"
+            verb = "decided (non-pending)" if is_clear else "pending"
+            return json.dumps({
+                "error": error_type, "player_a": player_a, "player_b": player_b,
+                "year": year, "day": day,
+                "message": (
+                    f"No {verb} match found where {player_a} and {player_b} are on opposite sides"
+                    + (f" for {year} day {day}" if year and day else "")
+                    + ". Ask the admin to confirm the year/day, or the player names."
+                ),
+            }, default=_json_default)
+
+        if len(candidates) > 1:
+            return json.dumps({
+                "error": "ambiguous_match", "player_a": player_a, "player_b": player_b,
+                "candidates": [
+                    {
+                        "year": int(row["Year"]), "day": int(row["Day"]), "match_number": int(row["MatchNumber"]),
+                        "course": row["Course"], "match_type": row["MatchType"],
+                    }
+                    for row in candidates
+                ],
+                "message": "More than one matching match found - ask the admin which one (or for year/day).",
+            }, default=_json_default)
+
+        row = candidates[0]
+        match_year, match_day, match_number = int(row["Year"]), int(row["Day"]), int(row["MatchNumber"])
+        side_a, side_b = _side_of(row, player_a), _side_of(row, player_b)
+
+        if is_clear:
+            normalized_result, normalized_score = "", ""
+        else:
+            if outcome == "half":
+                result = "Half"
+            elif outcome == "player_a_won":
+                result = side_a
+            else:
+                result = side_b
+
+            ok, normalized_result, normalized_score, error_message = validate_result_score(result, score)
+            if not ok:
+                error_type = "score_required" if not (score or "").strip() else "invalid_score"
+                return json.dumps({"error": error_type, "message": error_message})
+
+        success = self.db_service.update_match_result(match_year, match_day, match_number,
+                                                        normalized_result, normalized_score)
+        if not success:
+            return json.dumps({
+                "error": f"failed to update match {match_number} (Year {match_year}, Day {match_day})",
+            })
+
+        self.data_service.invalidate_cache()
+        return json.dumps({
+            "updated": {
+                "year": match_year, "day": match_day, "match_number": match_number,
+                "course": row["Course"], "match_type": row["MatchType"],
+                "result": normalized_result, "score": normalized_score,
+            },
+        }, default=_json_default)
 
     def _format_player_stats(self, players: list[str], year: int) -> str:
         try:
