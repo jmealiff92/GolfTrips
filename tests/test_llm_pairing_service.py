@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.llm_pairing_service import (
     PairingSuggester, PairingSuggestionError, _serialize_content_blocks, _summarize_conversation_shape,
+    _is_well_formed_conversation,
 )
 
 
@@ -132,6 +133,27 @@ class TestSummarizeConversationShape(unittest.TestCase):
     def test_flags_unexpected_content_type(self):
         result = _summarize_conversation_shape([{'role': 'user', 'content': None}])
         self.assertEqual(result, [{'index': 0, 'role': 'user', 'content_type': 'NoneType'}])
+
+
+class TestIsWellFormedConversation(unittest.TestCase):
+    def test_accepts_proper_message_dicts(self):
+        self.assertTrue(_is_well_formed_conversation([
+            {'role': 'user', 'content': 'hi'},
+            {'role': 'assistant', 'content': [{'type': 'text', 'text': 'hello'}]},
+        ]))
+
+    def test_accepts_empty_list(self):
+        self.assertTrue(_is_well_formed_conversation([]))
+
+    def test_rejects_bare_string_element(self):
+        self.assertFalse(_is_well_formed_conversation(['a bare string', {'role': 'user', 'content': 'hi'}]))
+
+    def test_rejects_non_list(self):
+        self.assertFalse(_is_well_formed_conversation("not a list"))
+        self.assertFalse(_is_well_formed_conversation(None))
+
+    def test_rejects_dict_missing_content(self):
+        self.assertFalse(_is_well_formed_conversation([{'role': 'user'}]))
 
 
 class TestPairingSuggester(unittest.TestCase):
@@ -444,6 +466,24 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertEqual(len(original_conversation), 2)  # caller's list untouched
         self.assertEqual(len(result['conversation']), 4)
         self.assertEqual(result['conversation'][-1], {'role': 'assistant', 'content': result['reply']})
+
+    def test_chat_discards_malformed_conversation_and_reseeds_fresh(self):
+        """Reproduces a real production failure: a stored/passed-in conversation with a malformed
+        turn (a bare string instead of a message dict) must not be sent to the API as-is - it
+        should be discarded and the chat should reseed fresh instead of returning a 400."""
+        suggester = self._suggester()
+        malformed_conversation = ['a bare string, not a message dict']
+        fake_client = _stream_client(FakeMessage("Sure, Alice and Bob look strong together."))
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=malformed_conversation,
+                user_message="What do you think?"
+            )
+        self.assertEqual(fake_client.messages.stream.call_count, 1)
+        # Reseeded from scratch: first turn is the normal context-block seed, not the malformed input.
+        seed_content = result['conversation'][0]['content']
+        self.assertIn('Alice', seed_content)
+        self.assertIn('What do you think?', seed_content)
 
     def test_chat_missing_api_key_raises_configuration_error(self):
         suggester = PairingSuggester(self.data_service, self.db_service, api_key=None, model='claude-test')

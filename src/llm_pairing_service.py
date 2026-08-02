@@ -48,6 +48,15 @@ def _df_records(df) -> list:
     return df.where(df.notnull(), None).to_dict('records')
 
 
+def _is_well_formed_conversation(conversation) -> bool:
+    """A stored/passed-in conversation is only safe to continue if every turn is a proper
+    {"role": ..., "content": ...} message dict - a malformed entry (e.g. a bare string) makes the
+    next API call fail with a 400 'Input does not match the expected shape' error."""
+    return isinstance(conversation, list) and all(
+        isinstance(turn, dict) and "role" in turn and "content" in turn for turn in conversation
+    )
+
+
 def _summarize_conversation_shape(conversation) -> list:
     """Compact, log-safe structural summary of a `messages` list - role, content type, and (for
     block-list content) each block's type - for diagnosing 'Input does not match the expected
@@ -600,6 +609,18 @@ class PairingSuggester:
         user_message = (user_message or "").strip()
         if not user_message:
             raise PairingSuggestionError("Type a message before sending.")
+
+        if conversation and not _is_well_formed_conversation(conversation):
+            # Seen in production: a stored/passed-in conversation with a malformed turn (e.g. a
+            # bare string instead of a {"role", "content"} dict), which makes the API reject the
+            # whole request with a 400 "Input does not match the expected shape" error. Log the
+            # actual value (not just its shape) so the next occurrence pins down where it came
+            # from, and fall back to a fresh seed rather than sending it to the API broken.
+            logger.warning(
+                "Discarding malformed conversation for team=%s year=%s, starting fresh: %r",
+                team, year, conversation
+            )
+            conversation = None
 
         if conversation:
             conversation = list(conversation)
