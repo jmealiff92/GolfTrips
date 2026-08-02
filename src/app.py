@@ -56,17 +56,17 @@ pairing_suggester = PairingSuggester(data_service, db_service)
 # suggestions/chat) - runs them in a subprocess and returns the initial HTTP response immediately,
 # so a long Claude call can't get killed by a proxy/Gunicorn request timeout. The frontend polls a
 # small status endpoint instead of holding one connection open for the whole call.
+#
+# Dash writes each job's final result via a bare cache.set(result_key, ...) with no retry (see
+# dash/background_callback/managers/diskcache_manager.py) - if that single write hits SQLite lock
+# contention on this file (plausible for a 40-90s tool-heavy reply, with the browser polling this
+# same cache the whole time), diskcache raises Timeout and the job dies right there: the callback
+# function already finished, but Dash never gets to write the "done" marker, so the live page polls
+# forever and the chat's typing indicator never clears - only a refresh (which now reads from the
+# DB-backed pairing_chat_sessions table instead of this cache) recovers it. Raising the SQLite lock
+# timeout here reduces how often that write loses the race.
 cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
-background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir))
-
-# Server-side backup of each admin's Captain Claude conversation, keyed by (email, year). The
-# pairing-conversation-store/pairing-chat-component state below only lives in the browser tab's
-# memory (dcc.Store default storage_type) - if that tab is backgrounded/reloaded while a reply is
-# still generating, the background callback finishes and writes its result, but there's no live
-# tab left to poll for it and the reply is lost from the UI even though it completed. Saving a copy
-# here as each turn lands lets update_pairing_roster restore the latest known conversation whenever
-# the page (re)loads, instead of always starting blank.
-pairing_chat_cache = diskcache.Cache(os.path.join(cache_dir, 'pairing_chat_sessions'))
+background_callback_manager = DiskcacheManager(diskcache.Cache(cache_dir, timeout=120))
 
 # Initialize Dash app with improved theme
 app = dash.Dash(
@@ -1417,6 +1417,9 @@ def create_suggest_pairings_page():
         # can't be killed by a proxy or Gunicorn request timeout.
         dcc.Store(id='pairing-suggest-trigger', data=None),
         dcc.Store(id='pairing-chat-trigger', data=None),
+        # Set by clear_pairing_chat only after its DB delete completes, so the clientside reload
+        # below can't fire before the server-side clear is actually done.
+        dcc.Store(id='pairing-chat-cleared-signal', data=None),
 
         dbc.Card([
             dbc.CardBody([
@@ -2545,9 +2548,9 @@ def update_pairing_roster(year, team):
     PairingSuggester._build_chat_context_block), so only a changed year invalidates it - the team
     filter just changes which roster is checkable for pairing suggestions, and the chat still
     knows about every player regardless. A year change restores that user's last known conversation
-    for the new year from pairing_chat_cache (or starts blank if there isn't one) rather than always
-    wiping it - this is also what runs on page load, so a reply that finished generating after the
-    tab was backgrounded/reloaded and never reached the live page still shows up when it's reopened.
+    for the new year from the DB (or starts blank if there isn't one) rather than always wiping it -
+    this is also what runs on page load, so a reply that finished generating after the tab was
+    backgrounded/reloaded and never reached the live page still shows up when it's reopened.
     A team-only change leaves the chat alone.
     """
     if not year or not team:
@@ -2562,29 +2565,44 @@ def update_pairing_roster(year, team):
         return options, [], no_update, no_update, no_update, no_update
 
     email = get_current_user_email()
-    cached = pairing_chat_cache.get((email, year)) if email else None
-    if cached:
-        return options, [], cached.get('conversation'), cached.get('messages', []), None, None
+    saved = db_service.get_pairing_chat_session(email, year) if email else None
+    if saved:
+        return options, [], saved.get('conversation'), saved.get('messages', []), None, None
     return options, [], None, [], None, None
 
 
 # Clear the on-screen chat and drop its persisted backup for this year, so it doesn't come back
-# on the next page load/reconnect (see pairing_chat_cache above).
+# on the next page load/reconnect (see pairing_chat_sessions table). Also fires a full page
+# reload (via the clientside callback below) once the DB delete is done, rather than just
+# resetting the two Outputs in place - that's the only way to guarantee no stale client-side
+# state survives (a half-applied ChatComponent, a message typed before the clear landed, etc.),
+# and gives a clear, unambiguous signal that the clear actually took effect.
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+     Output('pairing-chat-component', 'messages', allow_duplicate=True),
+     Output('pairing-chat-cleared-signal', 'data')],
     Input('btn-clear-pairing-chat', 'n_clicks'),
     State('pairing-year-filter', 'value'),
     prevent_initial_call=True,
 )
 def clear_pairing_chat(n_clicks, year):
     if not n_clicks:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     email = get_current_user_email()
     if email and year:
-        pairing_chat_cache.pop((email, year), None)
-    return None, []
+        db_service.delete_pairing_chat_session(email, year)
+    return None, [], int(time.time() * 1000)
+
+
+# Reload the page once clear_pairing_chat's DB delete has actually completed (the signal store
+# only changes after that, so this can't fire early and race the delete).
+app.clientside_callback(
+    "function(signal) { if (signal) { window.location.reload(); } return window.dash_clientside.no_update; }",
+    Output('pairing-chat-cleared-signal', 'data', allow_duplicate=True),
+    Input('pairing-chat-cleared-signal', 'data'),
+    prevent_initial_call=True,
+)
 
 
 # Enable/disable the Suggest Pairings button based on the selected player count
@@ -2746,7 +2764,7 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
         # background callback below can take up to a minute for a tool-heavy question, and if the
         # tab gets backgrounded/reloaded before it finishes, restoring from this snapshot alone at
         # least preserves "I asked X" instead of silently dropping the message too.
-        pairing_chat_cache.set((email, year), {'conversation': conversation, 'messages': messages})
+        db_service.save_pairing_chat_session(email, year, conversation, messages)
 
     return messages, {
         'team': team, 'year': year, 'available_players': available_players,
@@ -2759,6 +2777,18 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
 # subprocess, via DiskcacheManager) since a tool-calling Claude exchange can take well past a
 # typical proxy/Gunicorn request timeout - this returns the initial HTTP response immediately and
 # lets the frontend poll for the result instead of holding one connection open for the whole call.
+#
+# Delivers its result via set_progress (progress=[...] below) rather than relying solely on the
+# normal return-value delivery. Dash's own post-return delivery writes the result to its job cache
+# only AFTER this function returns, and the very next poll independently checks "is the subprocess
+# still alive" (job_running) and "is there a result yet" (get_result) - if a poll lands in the gap
+# between the subprocess exiting and that write becoming visible to it, Dash concludes the job was
+# canceled and stops polling for good, even though the real answer was written a moment earlier.
+# set_progress writes to a separate cache key that every poll checks unconditionally, and we call
+# it here *before* returning (while the subprocess and job_running() are both still very much
+# alive), so the frontend picks up the reply on its next poll regardless of how that post-return
+# race resolves. progress_default=no_update keeps this from touching the outputs before the first
+# set_progress call or after the callback fully completes.
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
      Output('pairing-chat-component', 'messages', allow_duplicate=True)],
@@ -2766,8 +2796,11 @@ def stage_pairing_chat_message(new_message, messages, year, team, available_play
     State('pairing-chat-component', 'messages'),
     prevent_initial_call=True,
     background=True,
+    progress=[Output('pairing-conversation-store', 'data', allow_duplicate=True),
+              Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+    progress_default=[no_update, no_update],
 )
-def run_pairing_chat_message_background(trigger, messages):
+def run_pairing_chat_message_background(set_progress, trigger, messages):
     if not trigger:
         return no_update, no_update
 
@@ -2785,17 +2818,20 @@ def run_pairing_chat_message_background(trigger, messages):
             # a live tab is still around to poll for it - persist it here so a reply that finished
             # after the tab was backgrounded/reloaded isn't lost, and shows up next time
             # update_pairing_roster loads this user's conversation for this year.
-            pairing_chat_cache.set((email, year), {'conversation': result['conversation'], 'messages': messages})
+            db_service.save_pairing_chat_session(email, year, result['conversation'], messages)
+        set_progress((result['conversation'], messages))
         return result['conversation'], messages
     except PairingSuggestionError as e:
         logger.warning("Pairing chat failed (team=%s, year=%s): %s", team, year, e)
         messages.append({'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ {e}"})
+        set_progress((no_update, messages))
         return no_update, messages
     except Exception as e:
         logger.exception("Unexpected error in pairing chat")
         messages.append({
             'id': int(time.time() * 1000), 'role': 'assistant', 'content': f"⚠️ Unexpected error: {e}",
         })
+        set_progress((no_update, messages))
         return no_update, messages
 
 

@@ -7,7 +7,10 @@ import anthropic
 import httpx
 import pandas as pd
 
-from src.llm_pairing_service import PairingSuggester, PairingSuggestionError
+from src.llm_pairing_service import (
+    PairingSuggester, PairingSuggestionError, _serialize_content_blocks, _summarize_conversation_shape,
+    _is_well_formed_conversation,
+)
 
 
 class FakeTextBlock:
@@ -27,6 +30,19 @@ class FakeToolUseBlock:
         self.id = tool_id
         self.name = name
         self.input = input_
+
+
+class FakeThinkingBlock:
+    def __init__(self, thinking='reasoning...', signature='sig123'):
+        self.type = 'thinking'
+        self.thinking = thinking
+        self.signature = signature
+
+
+class FakeRedactedThinkingBlock:
+    def __init__(self, data='redacted-data'):
+        self.type = 'redacted_thinking'
+        self.data = data
 
 
 class FakeMessage:
@@ -53,6 +69,91 @@ def _stream_client(final_messages=None, error=None):
     else:
         entered.get_final_message.return_value = final_messages
     return fake_client
+
+
+class TestSerializeContentBlocks(unittest.TestCase):
+    """_serialize_content_blocks must round-trip every block type Claude can return in a
+    tool-calling turn - silently dropping one (e.g. thinking blocks) corrupts the conversation
+    shape and breaks the next API call with a 400 error."""
+
+    def test_preserves_text_and_tool_use_blocks(self):
+        blocks = [FakeTextBlock('hello'), FakeToolUseBlock('id1', 'get_matches', {'player': 'Alice'})]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [
+            {'type': 'text', 'text': 'hello'},
+            {'type': 'tool_use', 'id': 'id1', 'name': 'get_matches', 'input': {'player': 'Alice'}},
+        ])
+
+    def test_preserves_thinking_block_with_signature(self):
+        blocks = [FakeThinkingBlock(thinking='reasoning through it', signature='sig-xyz')]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [{'type': 'thinking', 'thinking': 'reasoning through it', 'signature': 'sig-xyz'}])
+
+    def test_preserves_redacted_thinking_block(self):
+        blocks = [FakeRedactedThinkingBlock(data='opaque-data')]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result, [{'type': 'redacted_thinking', 'data': 'opaque-data'}])
+
+    def test_preserves_mixed_thinking_and_tool_use_in_order(self):
+        blocks = [
+            FakeThinkingBlock(thinking='step 1', signature='sig-1'),
+            FakeToolUseBlock('id2', 'get_player_stats', {'player': 'Bob'}),
+        ]
+        result = _serialize_content_blocks(blocks)
+        self.assertEqual(result[0]['type'], 'thinking')
+        self.assertEqual(result[1]['type'], 'tool_use')
+
+
+class TestSummarizeConversationShape(unittest.TestCase):
+    """_summarize_conversation_shape must never itself raise, however malformed the conversation
+    is - it exists specifically to describe a broken shape in the logs when the API rejects one."""
+
+    def test_summarizes_string_content(self):
+        result = _summarize_conversation_shape([{'role': 'user', 'content': 'hello there'}])
+        self.assertEqual(result, [{'index': 0, 'role': 'user', 'content_type': 'str', 'len': 11}])
+
+    def test_summarizes_block_list_content(self):
+        conversation = [{'role': 'assistant', 'content': [
+            {'type': 'thinking', 'thinking': 'x', 'signature': 'y'},
+            {'type': 'tool_use', 'id': 'i', 'name': 'n', 'input': {}},
+        ]}]
+        result = _summarize_conversation_shape(conversation)
+        self.assertEqual(result, [{
+            'index': 0, 'role': 'assistant', 'content_type': 'list', 'blocks': ['thinking', 'tool_use'],
+        }])
+
+    def test_flags_non_list_conversation(self):
+        result = _summarize_conversation_shape("not a list")
+        self.assertIn('error', result[0])
+
+    def test_flags_non_dict_message(self):
+        result = _summarize_conversation_shape(['not a dict'])
+        self.assertEqual(result, [{'index': 0, 'error': 'not a dict: str'}])
+
+    def test_flags_unexpected_content_type(self):
+        result = _summarize_conversation_shape([{'role': 'user', 'content': None}])
+        self.assertEqual(result, [{'index': 0, 'role': 'user', 'content_type': 'NoneType'}])
+
+
+class TestIsWellFormedConversation(unittest.TestCase):
+    def test_accepts_proper_message_dicts(self):
+        self.assertTrue(_is_well_formed_conversation([
+            {'role': 'user', 'content': 'hi'},
+            {'role': 'assistant', 'content': [{'type': 'text', 'text': 'hello'}]},
+        ]))
+
+    def test_accepts_empty_list(self):
+        self.assertTrue(_is_well_formed_conversation([]))
+
+    def test_rejects_bare_string_element(self):
+        self.assertFalse(_is_well_formed_conversation(['a bare string', {'role': 'user', 'content': 'hi'}]))
+
+    def test_rejects_non_list(self):
+        self.assertFalse(_is_well_formed_conversation("not a list"))
+        self.assertFalse(_is_well_formed_conversation(None))
+
+    def test_rejects_dict_missing_content(self):
+        self.assertFalse(_is_well_formed_conversation([{'role': 'user'}]))
 
 
 class TestPairingSuggester(unittest.TestCase):
@@ -279,6 +380,23 @@ class TestPairingSuggester(unittest.TestCase):
             with self.assertRaises(PairingSuggestionError):
                 suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
 
+    def test_bad_request_error_logs_conversation_shape_and_is_wrapped_gracefully(self):
+        """A 400 'Input does not match the expected shape' error falls through to the generic
+        APIError handler, which should log the conversation's structure (not just re-raise blind)
+        so a malformed shape is diagnosable from the logs rather than requiring a guess."""
+        suggester = self._suggester()
+        request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        response = httpx.Response(400, request=request)
+        fake_client = _stream_client(error=anthropic.BadRequestError(
+            'messages.0: Input does not match the expected shape.', response=response, body=None
+        ))
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            with self.assertLogs('src.llm_pairing_service', level='WARNING') as log_ctx:
+                with self.assertRaises(PairingSuggestionError) as ctx:
+                    suggester.suggest_pairings('Blue', 2026, ['Alice', 'Bob'])
+        self.assertIn('does not match the expected shape', str(ctx.exception))
+        self.assertTrue(any('conversation shape' in message for message in log_ctx.output))
+
     def test_timeout_error_is_wrapped_gracefully_and_distinctly(self):
         suggester = self._suggester()
         request = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
@@ -348,6 +466,24 @@ class TestPairingSuggester(unittest.TestCase):
         self.assertEqual(len(original_conversation), 2)  # caller's list untouched
         self.assertEqual(len(result['conversation']), 4)
         self.assertEqual(result['conversation'][-1], {'role': 'assistant', 'content': result['reply']})
+
+    def test_chat_discards_malformed_conversation_and_reseeds_fresh(self):
+        """Reproduces a real production failure: a stored/passed-in conversation with a malformed
+        turn (a bare string instead of a message dict) must not be sent to the API as-is - it
+        should be discarded and the chat should reseed fresh instead of returning a 400."""
+        suggester = self._suggester()
+        malformed_conversation = ['a bare string, not a message dict']
+        fake_client = _stream_client(FakeMessage("Sure, Alice and Bob look strong together."))
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=malformed_conversation,
+                user_message="What do you think?"
+            )
+        self.assertEqual(fake_client.messages.stream.call_count, 1)
+        # Reseeded from scratch: first turn is the normal context-block seed, not the malformed input.
+        seed_content = result['conversation'][0]['content']
+        self.assertIn('Alice', seed_content)
+        self.assertIn('What do you think?', seed_content)
 
     def test_chat_missing_api_key_raises_configuration_error(self):
         suggester = PairingSuggester(self.data_service, self.db_service, api_key=None, model='claude-test')
@@ -461,6 +597,34 @@ class TestPairingSuggesterTools(unittest.TestCase):
         tool_result_content = tool_result_turn['content'][0]['content']
         self.assertIn('3&2', tool_result_content)
         self.assertIn('Alice', tool_result_content)
+
+    def test_tool_use_turn_preserves_thinking_block_in_stored_conversation(self):
+        """A thinking block alongside tool_use must survive into the stored conversation -
+        dropping it corrupts the shape Anthropic's API expects on the next turn (extended
+        thinking requires thinking blocks to be echoed back unmodified, signature included)."""
+        suggester = self._suggester()
+        tool_call = FakeMessage(
+            content=[
+                FakeThinkingBlock(thinking='Let me check Alice\'s matches', signature='sig-abc'),
+                FakeToolUseBlock('tool_1', 'get_matches', {'player': 'Alice'}),
+            ],
+            stop_reason='tool_use',
+        )
+        final = FakeMessage("Alice won 3&2 on day 1 - not especially tight.")
+        fake_client = _stream_client([tool_call, final])
+
+        with patch('src.llm_pairing_service.anthropic.Anthropic', return_value=fake_client):
+            result = suggester.continue_conversation(
+                'Blue', 2026, ['Alice', 'Bob'], conversation=None, user_message="Was Alice's win tight?"
+            )
+
+        assistant_turn = result['conversation'][-3]
+        self.assertEqual(assistant_turn['role'], 'assistant')
+        block_types = [b['type'] for b in assistant_turn['content']]
+        self.assertIn('thinking', block_types)
+        thinking_block = next(b for b in assistant_turn['content'] if b['type'] == 'thinking')
+        self.assertEqual(thinking_block['thinking'], 'Let me check Alice\'s matches')
+        self.assertEqual(thinking_block['signature'], 'sig-abc')
 
     def test_unrecognized_tool_reports_error_without_crashing_the_loop(self):
         suggester = self._suggester()

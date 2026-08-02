@@ -166,3 +166,16 @@ class DatabaseServiceBase(ABC):
     @abstractmethod
     def import_from_csv(self, csv_path: str) -> Tuple[int, int]:
         pass
+
+    # Pairing Chat Operations (Captain Claude conversation persistence)
+    @abstractmethod
+    def get_pairing_chat_session(self, email: str, year: int) -> Optional[Dict]:
+        pass
+
+    @abstractmethod
+    def save_pairing_chat_session(self, email: str, year: int, conversation, messages) -> bool:
+        pass
+
+    @abstractmethod
+    def delete_pairing_chat_session(self, email: str, year: int) -> bool:
+        pass
