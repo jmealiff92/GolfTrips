@@ -1417,6 +1417,9 @@ def create_suggest_pairings_page():
         # can't be killed by a proxy or Gunicorn request timeout.
         dcc.Store(id='pairing-suggest-trigger', data=None),
         dcc.Store(id='pairing-chat-trigger', data=None),
+        # Set by clear_pairing_chat only after its DB delete completes, so the clientside reload
+        # below can't fire before the server-side clear is actually done.
+        dcc.Store(id='pairing-chat-cleared-signal', data=None),
 
         dbc.Card([
             dbc.CardBody([
@@ -2569,22 +2572,37 @@ def update_pairing_roster(year, team):
 
 
 # Clear the on-screen chat and drop its persisted backup for this year, so it doesn't come back
-# on the next page load/reconnect (see pairing_chat_sessions table).
+# on the next page load/reconnect (see pairing_chat_sessions table). Also fires a full page
+# reload (via the clientside callback below) once the DB delete is done, rather than just
+# resetting the two Outputs in place - that's the only way to guarantee no stale client-side
+# state survives (a half-applied ChatComponent, a message typed before the clear landed, etc.),
+# and gives a clear, unambiguous signal that the clear actually took effect.
 @app.callback(
     [Output('pairing-conversation-store', 'data', allow_duplicate=True),
-     Output('pairing-chat-component', 'messages', allow_duplicate=True)],
+     Output('pairing-chat-component', 'messages', allow_duplicate=True),
+     Output('pairing-chat-cleared-signal', 'data')],
     Input('btn-clear-pairing-chat', 'n_clicks'),
     State('pairing-year-filter', 'value'),
     prevent_initial_call=True,
 )
 def clear_pairing_chat(n_clicks, year):
     if not n_clicks:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     email = get_current_user_email()
     if email and year:
         db_service.delete_pairing_chat_session(email, year)
-    return None, []
+    return None, [], int(time.time() * 1000)
+
+
+# Reload the page once clear_pairing_chat's DB delete has actually completed (the signal store
+# only changes after that, so this can't fire early and race the delete).
+app.clientside_callback(
+    "function(signal) { if (signal) { window.location.reload(); } return window.dash_clientside.no_update; }",
+    Output('pairing-chat-cleared-signal', 'data', allow_duplicate=True),
+    Input('pairing-chat-cleared-signal', 'data'),
+    prevent_initial_call=True,
+)
 
 
 # Enable/disable the Suggest Pairings button based on the selected player count
