@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 MAX_ATTEMPTS = 2
-MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 8192
 MAX_TOOL_ITERATIONS = 6
 
 
@@ -534,6 +534,7 @@ class PairingSuggester:
         self.db_service = db_service
         self._api_key_override = api_key
         self.model = model or os.getenv('ANTHROPIC_MODEL', DEFAULT_MODEL)
+        self.max_tokens = int(os.getenv('ANTHROPIC_MAX_TOKENS', DEFAULT_MAX_TOKENS))
 
     @property
     def api_key(self) -> Optional[str]:
@@ -926,7 +927,7 @@ Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact s
         try:
             with client.messages.stream(
                 model=self.model,
-                max_tokens=MAX_TOKENS,
+                max_tokens=self.max_tokens,
                 tools=self.TOOLS,
                 messages=conversation,
             ) as stream:
