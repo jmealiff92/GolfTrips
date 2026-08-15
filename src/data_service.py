@@ -168,6 +168,82 @@ class DataService:
 
         return player_stats[cols].sort_values(by='Points', ascending=False)
 
+    def get_player_performance_by_year(self, year: int) -> pd.DataFrame:
+        """Get performance statistics for every player on that year's roster.
+
+        The roster (player_teams table, via get_team_assignments_by_year) is the
+        base so a rostered player with zero matches recorded still shows up with
+        zeroed stats, rather than only listing players derived from match rows.
+        """
+        cols = ['Player', 'Team', 'Matches', 'Wins', 'Losses', 'Halves', 'Points', 'Win %', 'PPG']
+
+        all_results = self.build_results_per_player()
+
+        roster = pd.DataFrame(self.db.get_team_assignments_by_year(year))
+        if roster.empty:
+            # No roster on file for this year - fall back to players derived from matches
+            if not all_results.empty:
+                roster = all_results[all_results['Year'] == year][['Player']].drop_duplicates()
+            else:
+                roster = pd.DataFrame(columns=['Player'])
+            roster['Team'] = None
+        else:
+            roster = roster.rename(columns={'name': 'Player', 'team': 'Team'})[['Player', 'Team']]
+
+        if roster.empty:
+            return pd.DataFrame(columns=cols)
+
+        if not all_results.empty:
+            results = all_results[(all_results['Year'] == year) & (all_results['Result'] != 'Pending')]
+            player_stats = results.groupby('Player').agg(
+                Matches=('Year', 'count'),
+                Wins=('Result', lambda x: (x == 'Win').sum()),
+                Losses=('Result', lambda x: (x == 'Loss').sum()),
+                Halves=('Result', lambda x: (x == 'Half').sum()),
+                Points=('Result', lambda x: (x == 'Win').sum() + 0.5 * (x == 'Half').sum())
+            ).reset_index()
+        else:
+            player_stats = pd.DataFrame(columns=['Player', 'Matches', 'Wins', 'Losses', 'Halves', 'Points'])
+
+        player_stats = roster.merge(player_stats, on='Player', how='left')
+        for col in ['Matches', 'Wins', 'Losses', 'Halves', 'Points']:
+            player_stats[col] = player_stats[col].fillna(0)
+
+        player_stats['Win %'] = player_stats.apply(
+            lambda row: round((row['Wins'] + row['Halves'] / 2) / row['Matches'] * 100, 2) if row['Matches'] > 0 else 0,
+            axis=1
+        )
+        player_stats['PPG'] = player_stats.apply(
+            lambda row: round(row['Points'] / row['Matches'], 2) if row['Matches'] > 0 else 0,
+            axis=1
+        )
+
+        return player_stats[cols].sort_values(by='Points', ascending=False)
+
+    def get_team_points_progression(self, year: int) -> dict:
+        """Cumulative Blue/Red team points after each match in the given year, in
+        chronological (Day, MatchNumber) order - the per-match-granularity sibling
+        of get_team_points_by_day (which aggregates by day instead)."""
+        df = self.df
+        if df.empty:
+            return {}
+
+        year_df = df[(df['Year'] == year) & (df['Result'] != '')].copy()
+        if year_df.empty:
+            return {}
+
+        year_df = year_df.sort_values(['Day', 'MatchNumber'])
+        year_df['Blue_Points'] = year_df['Result'].apply(lambda r: 1.0 if r == 'Blue' else 0.5 if r == 'Half' else 0.0)
+        year_df['Red_Points'] = year_df['Result'].apply(lambda r: 1.0 if r == 'Red' else 0.5 if r == 'Half' else 0.0)
+
+        return {
+            'match_index': list(range(1, len(year_df) + 1)),
+            'day': [int(d) for d in year_df['Day'].tolist()],
+            'match_number': [int(m) for m in year_df['MatchNumber'].tolist()],
+            'blue': year_df['Blue_Points'].cumsum().tolist(),
+            'red': year_df['Red_Points'].cumsum().tolist(),
+        }
+
     def get_head_to_head_stats(self, player1: str, player2: str) -> dict:
         """Get head-to-head statistics between two players"""
         return self.db.get_head_to_head(player1, player2)

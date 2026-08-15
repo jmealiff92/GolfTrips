@@ -259,6 +259,96 @@ class TestDataService(unittest.TestCase):
             self.assertEqual(bob_stats['Losses'], 0)
             self.assertEqual(bob_stats['Halves'], 1)
 
+    def test_get_player_performance_by_year(self):
+        """Test per-year player performance is based on the year's roster"""
+        sample_results = pd.DataFrame({
+            'Player': ['John', 'John', 'Bob', 'Bob'],
+            'Year': [2023, 2024, 2023, 2023],
+            'Result': ['Win', 'Loss', 'Loss', 'Half'],
+            'MatchType': ['Fourball', 'Singles', 'Fourball', 'Singles']
+        })
+        roster = [
+            {'name': 'John', 'team': 'Blue', 'handicap_index': 10.0},
+            {'name': 'Bob', 'team': 'Red', 'handicap_index': 12.0},
+            {'name': 'Mike', 'team': 'Blue', 'handicap_index': 8.0},  # rostered, no matches this year
+        ]
+        self.mock_db.get_team_assignments_by_year.return_value = roster
+
+        with patch.object(self.data_service, 'build_results_per_player', return_value=sample_results):
+            result = self.data_service.get_player_performance_by_year(2023)
+
+            expected_columns = ['Player', 'Team', 'Matches', 'Wins', 'Losses', 'Halves', 'Points', 'Win %', 'PPG']
+            self.assertEqual(list(result.columns), expected_columns)
+            self.assertEqual(len(result), 3)  # every rostered player, including Mike
+
+            john_stats = result[result['Player'] == 'John'].iloc[0]
+            self.assertEqual(john_stats['Team'], 'Blue')
+            self.assertEqual(john_stats['Matches'], 1)  # only the 2023 match counts
+            self.assertEqual(john_stats['Wins'], 1)
+
+            bob_stats = result[result['Player'] == 'Bob'].iloc[0]
+            self.assertEqual(bob_stats['Team'], 'Red')
+            self.assertEqual(bob_stats['Matches'], 2)
+            self.assertEqual(bob_stats['Losses'], 1)
+            self.assertEqual(bob_stats['Halves'], 1)
+
+            mike_stats = result[result['Player'] == 'Mike'].iloc[0]
+            self.assertEqual(mike_stats['Team'], 'Blue')
+            self.assertEqual(mike_stats['Matches'], 0)
+            self.assertEqual(mike_stats['Points'], 0)
+            self.assertEqual(mike_stats['Win %'], 0)
+
+    def test_get_player_performance_by_year_no_roster(self):
+        """No roster on file for the year falls back to players derived from matches"""
+        sample_results = pd.DataFrame({
+            'Player': ['John', 'Bob'],
+            'Year': [2023, 2023],
+            'Result': ['Win', 'Loss'],
+            'MatchType': ['Fourball', 'Fourball']
+        })
+        self.mock_db.get_team_assignments_by_year.return_value = []
+
+        with patch.object(self.data_service, 'build_results_per_player', return_value=sample_results):
+            result = self.data_service.get_player_performance_by_year(2023)
+
+            self.assertEqual(set(result['Player']), {'John', 'Bob'})
+            self.assertTrue(result['Team'].isna().all())
+
+    def test_get_player_performance_by_year_empty(self):
+        """No roster and no matches for the year returns an empty result"""
+        self.mock_db.get_team_assignments_by_year.return_value = []
+
+        with patch.object(self.data_service, 'build_results_per_player', return_value=pd.DataFrame()):
+            result = self.data_service.get_player_performance_by_year(2023)
+
+            self.assertTrue(result.empty)
+
+    def test_get_team_points_progression(self):
+        """Cumulative Blue/Red points should build up match-by-match in chronological order"""
+        self.mock_db.get_all_matches.return_value = self.sample_matches
+
+        progression = self.data_service.get_team_points_progression(2023)
+
+        self.assertEqual(progression['match_index'], [1, 2, 3])
+        self.assertEqual(progression['day'], [1, 1, 2])
+        self.assertEqual(progression['match_number'], [1, 2, 3])
+        self.assertEqual(progression['blue'], [1.0, 1.0, 1.5])
+        self.assertEqual(progression['red'], [0.0, 1.0, 1.5])
+
+        # Final cumulative totals should match summarise_team_results for the same year
+        team_summary = self.data_service.summarise_team_results()
+        summary_2023 = team_summary[team_summary['Year'] == 2023].iloc[0]
+        self.assertEqual(progression['blue'][-1], summary_2023['Blue_Points'])
+        self.assertEqual(progression['red'][-1], summary_2023['Red_Points'])
+
+    def test_get_team_points_progression_empty(self):
+        """No matches for the year returns an empty dict"""
+        self.mock_db.get_all_matches.return_value = self.sample_matches
+
+        progression = self.data_service.get_team_points_progression(2099)
+
+        self.assertEqual(progression, {})
+
     def test_get_head_to_head_stats(self):
         """Test head-to-head stats delegation"""
         expected_stats = {'wins': 2, 'losses': 1}
