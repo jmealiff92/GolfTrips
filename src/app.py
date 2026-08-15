@@ -504,6 +504,7 @@ app.layout = html.Div([
             dbc.NavLink('🏆 Matches', href='/matches', active='exact'),
             dbc.NavLink('🏳️ Teams', href='/teams', active='exact'),
             dbc.NavLink('👤 Player Details', href='/player-details', active='exact'),
+            dbc.NavLink('📅 Year-by-Year', href='/year-by-year', active='exact'),
             dbc.NavLink('👥 Manage Players', href='/manage-players', active='exact', id='nav-manage-players'),
             dbc.NavLink('🏌️ Manage Courses', href='/manage-courses', active='exact', id='nav-manage-courses'),
             dbc.NavLink('➕ Add Match', href='/add-match', active='exact', id='nav-add-match'),
@@ -804,6 +805,47 @@ def create_player_details_page():
             filter_action='native',
             page_size=25
         )
+    ])
+
+
+# ============ Page 2b: Year-by-Year ============
+def create_year_by_year_page():
+    years = sorted(db_service.get_years_list(), reverse=True)
+    default_year = years[0] if years else None
+
+    return html.Div([
+        html.H2("Year-by-Year"),
+        dcc.Dropdown(
+            id='year-by-year-dropdown',
+            options=[{'label': str(year), 'value': year} for year in years],
+            value=default_year,
+            clearable=False,
+            style={'width': '50%', 'marginBottom': '20px'}
+        ),
+
+        html.H3("Player Results", style={'marginTop': '30px'}),
+        dash_table.DataTable(
+            id='year-by-year-stats-table',
+            columns=[
+                {'name': 'Player', 'id': 'Player'},
+                {'name': 'Team', 'id': 'Team'},
+                {'name': 'Matches', 'id': 'Matches'},
+                {'name': 'Wins', 'id': 'Wins'},
+                {'name': 'Halves', 'id': 'Halves'},
+                {'name': 'Losses', 'id': 'Losses'},
+                {'name': 'Points', 'id': 'Points'},
+                {'name': 'Win %', 'id': 'Win %'},
+                {'name': 'PPG', 'id': 'PPG'}
+            ],
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left', 'padding': '10px'},
+            style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+            sort_action='native',
+            page_size=25
+        ),
+
+        html.H3("Team Points by Match", style={'marginTop': '30px'}),
+        dcc.Graph(id='year-by-year-points-chart')
     ])
 
 
@@ -1594,6 +1636,8 @@ def display_page(pathname):
         return create_teams_page()
     elif pathname == '/player-details':
         return create_player_details_page()
+    elif pathname == '/year-by-year':
+        return create_year_by_year_page()
     elif pathname == '/manage-players':
         return create_manage_players_page()
     elif pathname == '/manage-courses':
@@ -2021,6 +2065,35 @@ def update_player_details(player):
         opponent_stats_df.to_dict('records') if not opponent_stats_df.empty else [],
         course_perf.to_dict('records')
     )
+
+
+# Year-by-Year callback
+@app.callback(
+    [Output('year-by-year-stats-table', 'data'),
+     Output('year-by-year-points-chart', 'figure')],
+    Input('year-by-year-dropdown', 'value')
+)
+def update_year_by_year(year):
+    if not year:
+        return [], go.Figure()
+
+    stats_df = data_service.get_player_performance_by_year(year)
+    progression = data_service.get_team_points_progression(year)
+
+    fig = go.Figure()
+    if progression:
+        fig.add_trace(go.Scatter(
+            x=progression['match_index'], y=progression['blue'],
+            name='Blue', mode='lines+markers', marker_color=TEAM_BLUE_COLOR
+        ))
+        fig.add_trace(go.Scatter(
+            x=progression['match_index'], y=progression['red'],
+            name='Red', mode='lines+markers', marker_color=TEAM_RED_COLOR
+        ))
+    fig.update_layout(title=f"Team Points — {year}", xaxis_title="Match #", yaxis_title="Points")
+    fig.update_xaxes(tickmode='linear', dtick=1)
+
+    return stats_df.to_dict('records'), fig
 
 
 # Head-to-head callback
