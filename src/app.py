@@ -2091,7 +2091,9 @@ def update_year_by_year(year):
             name='Red', mode='lines+markers', marker_color=TEAM_RED_COLOR
         ))
     fig.update_layout(title=f"Team Points — {year}", xaxis_title="Match #", yaxis_title="Points")
-    fig.update_xaxes(tickmode='linear', dtick=1)
+    match_count = len(progression['match_index']) if progression else 1
+    fig.update_xaxes(tickmode='linear', dtick=1, range=[1, match_count])
+    fig.update_yaxes(rangemode='tozero')
 
     return stats_df.to_dict('records'), fig
 
