@@ -167,49 +167,100 @@ app.index_string = '''
         {%metas%}
         <title>{%title%}</title>
         {%favicon%}
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         {%css%}
         <style>
-            /* Golf Green Color Scheme */
+            /* Golf Green Color Scheme + design tokens */
             :root {
                 --golf-green-dark: #1b5e20;
                 --golf-green: #2e7d32;
                 --golf-green-light: #4caf50;
                 --golf-green-accent: #66bb6a;
                 --fairway-green: #81c784;
+
+                --font-sans: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                --radius-sm: 8px;
+                --radius-md: 12px;
+                --radius-lg: 18px;
+                --shadow-sm: 0 2px 8px rgba(27, 94, 32, 0.08);
+                --shadow-md: 0 6px 20px rgba(27, 94, 32, 0.12);
+                --shadow-lg: 0 16px 45px rgba(15, 40, 20, 0.18);
+                --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
+            }
+
+            html {
+                scroll-behavior: smooth;
             }
 
             body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                position: relative;
+                font-family: var(--font-sans);
                 background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #4caf50 100%);
                 min-height: 100vh;
             }
 
+            /* Subtle grain overlay for a less "flat" gradient - purely decorative,
+               so it's pointer-events:none and doesn't affect layout. */
+            body::before {
+                content: '';
+                position: fixed;
+                inset: 0;
+                pointer-events: none;
+                z-index: 0;
+                opacity: 0.035;
+                mix-blend-mode: overlay;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            }
+
             .main-container {
+                position: relative;
+                z-index: 1;
                 background: #fafafa;
-                border-radius: 15px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+                border-radius: var(--radius-lg);
+                box-shadow: var(--shadow-lg);
                 margin: 20px auto;
                 max-width: 1400px;
                 padding: 30px;
+                animation: fade-up 0.5s var(--ease-premium) both;
             }
 
             .header-title {
                 background: linear-gradient(135deg, #1b5e20 0%, #4caf50 100%);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
-                font-weight: 700;
-                font-size: 2.5rem;
+                font-weight: 800;
+                font-size: clamp(1.9rem, 1.4rem + 2vw, 2.75rem);
+                letter-spacing: -0.02em;
                 text-align: center;
                 margin-bottom: 30px;
                 text-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }
 
-            /* Navigation Styling */
+            /* Navigation Styling - sticky, frosted-glass header that gains depth on scroll */
+            .site-nav {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                padding: 10px 8px;
+                border-radius: var(--radius-md);
+                background: rgba(250, 250, 250, 0.75);
+                backdrop-filter: blur(10px) saturate(160%);
+                -webkit-backdrop-filter: blur(10px) saturate(160%);
+                transition: box-shadow 0.3s var(--ease-premium), background-color 0.3s var(--ease-premium);
+            }
+
+            .site-nav.is-scrolled {
+                background: rgba(250, 250, 250, 0.92);
+                box-shadow: var(--shadow-md);
+            }
+
             .nav-pills .nav-link {
                 border-radius: 25px;
                 margin: 0 5px;
                 margin-bottom: 10px;
-                transition: all 0.3s ease;
+                transition: transform 0.25s var(--ease-premium), box-shadow 0.25s var(--ease-premium), background-color 0.25s var(--ease-premium), color 0.25s var(--ease-premium);
                 color: #2e7d32;
                 font-weight: 500;
             }
@@ -226,19 +277,40 @@ app.index_string = '''
                 box-shadow: 0 4px 15px rgba(0,0,0,0.1);
             }
 
-            /* Card Styling */
+            /* Keyboard-focus ring (distinct from :hover) so keyboard users can see
+               where they are, without adding a permanent outline for mouse users. */
+            a:focus-visible,
+            button:focus-visible,
+            .nav-pills .nav-link:focus-visible,
+            input:focus-visible,
+            .dash-spreadsheet-container button:focus-visible {
+                outline: 3px solid rgba(76, 175, 80, 0.55) !important;
+                outline-offset: 2px;
+            }
+
+            /* Card Styling - staggered fade/slide entrance on first paint, capped so a
+               long list of cards doesn't leave the last ones waiting to appear. */
             .card {
                 border: 1px solid #e0e0e0;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-                border-radius: 10px;
-                transition: all 0.3s ease;
+                box-shadow: var(--shadow-sm);
+                border-radius: var(--radius-md);
+                transition: transform 0.3s var(--ease-premium), box-shadow 0.3s var(--ease-premium), border-color 0.3s var(--ease-premium);
                 background: white;
+                animation: fade-up 0.45s var(--ease-premium) both;
+                animation-delay: calc(var(--card-index, 0) * 60ms);
             }
 
             .card:hover {
-                box-shadow: 0 5px 20px rgba(46, 125, 50, 0.15);
+                box-shadow: var(--shadow-md);
                 border-color: #81c784;
             }
+
+            .card:nth-of-type(1) { --card-index: 1; }
+            .card:nth-of-type(2) { --card-index: 2; }
+            .card:nth-of-type(3) { --card-index: 3; }
+            .card:nth-of-type(4) { --card-index: 4; }
+            .card:nth-of-type(5) { --card-index: 5; }
+            .card:nth-of-type(6) { --card-index: 6; }
 
             .card-header {
                 background: linear-gradient(135deg, #f1f8f4 0%, #e8f5e9 100%);
@@ -253,7 +325,7 @@ app.index_string = '''
                 border: none;
                 border-radius: 25px;
                 padding: 10px 30px;
-                transition: all 0.3s ease;
+                transition: transform 0.2s var(--ease-premium), box-shadow 0.2s var(--ease-premium), background 0.2s var(--ease-premium);
                 font-weight: 500;
             }
 
@@ -261,6 +333,10 @@ app.index_string = '''
                 background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
                 transform: translateY(-2px);
                 box-shadow: 0 5px 15px rgba(46, 125, 50, 0.4);
+            }
+
+            .btn-primary:active {
+                transform: translateY(0) scale(0.98);
             }
 
             .btn-success {
@@ -448,12 +524,50 @@ app.index_string = '''
 
             /* Match Cards Styling */
             .match-card {
-                transition: all 0.3s ease !important;
+                transition: transform 0.3s var(--ease-premium), box-shadow 0.3s var(--ease-premium) !important;
             }
 
             .match-card:hover {
                 transform: translateY(-5px) !important;
                 box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+            }
+
+            /* Entrance keyframes - transform/opacity only, so they stay off the
+               browser's layout/paint path and are cheap even on a long page. */
+            @keyframes fade-up {
+                from { opacity: 0; transform: translateY(10px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
+
+            /* Premium touch: a thin, on-brand scrollbar instead of the OS default. */
+            ::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+            }
+            ::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            ::-webkit-scrollbar-thumb {
+                background: rgba(46, 125, 50, 0.35);
+                border-radius: 10px;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: rgba(46, 125, 50, 0.55);
+            }
+
+            /* Respect the user's OS-level motion preference: fall back to an
+               instant, static appearance with no scroll-smoothing or entrance
+               animation. This takes priority because it's declared last. */
+            @media (prefers-reduced-motion: reduce) {
+                html {
+                    scroll-behavior: auto;
+                }
+                *, *::before, *::after {
+                    animation-duration: 0.001ms !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0.001ms !important;
+                    scroll-behavior: auto !important;
+                }
             }
         </style>
     </head>
@@ -480,6 +594,26 @@ app.index_string = '''
                 if (event.ctrlKey || event.metaKey) return;  // let it submit as usual
                 event.stopPropagation();  // block dash-chat's submit handler; native newline still happens
             }, true);
+
+            // Toggle a class on the sticky nav once the page has scrolled past it, so it
+            // can pick up a background/shadow only when it's actually floating over
+            // content (kept a plain scroll listener + classList toggle - no layout reads
+            // in the handler - since Dash re-renders #page-content on every navigation
+            // and a MutationObserver-based approach would need to survive that anyway).
+            (function () {
+                var lastState = false;
+                function updateNavScrollState() {
+                    var nav = document.querySelector('.site-nav');
+                    if (!nav) return;
+                    var scrolled = window.scrollY > 12;
+                    if (scrolled !== lastState) {
+                        nav.classList.toggle('is-scrolled', scrolled);
+                        lastState = scrolled;
+                    }
+                }
+                window.addEventListener('scroll', updateNavScrollState, { passive: true });
+                document.addEventListener('DOMContentLoaded', updateNavScrollState);
+            })();
         </script>
     </body>
 </html>
@@ -512,7 +646,7 @@ app.layout = html.Div([
             dbc.NavLink('⛳ Captain Claude', href='/captain-claude', active='exact', id='nav-suggest-pairings'),
             dbc.NavLink('⚔️ Head-to-Head', href='/head-to-head', active='exact'),
             dbc.NavLink('📈 Course Stats', href='/course-stats', active='exact'),
-        ], pills=True, style={'marginBottom': '30px', 'justifyContent': 'center', 'flexWrap': 'wrap'}),
+        ], pills=True, className='site-nav', style={'marginBottom': '30px', 'justifyContent': 'center', 'flexWrap': 'wrap'}),
 
         # Alert for feedback messages
         html.Div(id='alert-container', style={'marginBottom': '20px'}),
