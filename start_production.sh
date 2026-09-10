@@ -1,7 +1,17 @@
 #!/bin/bash
 
-# Production Gunicorn startup script for Golf Trips application
-# Optimized for production deployment with no auto-reload
+# Production startup script for the FastHTML POC (spike branch)
+#
+# This branch's version of this script boots fasthtml_poc/ (the FastHTML/HTMX
+# proof-of-concept) instead of the Dash app in src/app.py, so a
+# `[render preview]` PR for this branch actually serves the new app for live
+# comparison. See fasthtml_poc/README.md for what it covers.
+#
+# Known limitation: Google OAuth redirect URIs must be pre-registered in
+# Google Cloud Console. A Render preview gets a dynamically-generated URL per
+# branch/PR, so once this is deployed, add
+# "<preview-url>/authorize" as an Authorized redirect URI for the OAuth
+# client before login will work there — this can't be automated.
 
 # Exit on error
 set -e
@@ -12,17 +22,16 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}🏌️  Golf Trips - Production Mode${NC}"
+echo -e "${GREEN}🏌️  Golf Trips - FastHTML POC - Production Mode${NC}"
 echo "===================================="
 
-# Check if .env exists
+# Check if .env exists (repo-root .env, shared with the Dash app)
 if [ -f .env ]; then
     # Load environment variables
     export $(grep -v '^#' .env | xargs)
 fi
 
-
-# Validate required environment variables
+# Validate required environment variables (same three the Dash app needs)
 REQUIRED_VARS=("GOOGLE_CLIENT_ID" "GOOGLE_CLIENT_SECRET" "SECRET_KEY")
 for var in "${REQUIRED_VARS[@]}"; do
     if [ -z "${!var}" ]; then
@@ -31,73 +40,27 @@ for var in "${REQUIRED_VARS[@]}"; do
     fi
 done
 
-# Configuration (can be overridden via environment variables)
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8050}"
-
-# Optimize for Render free tier (0.1 CPU, 512MB RAM)
-# Use 1 worker with multiple threads for memory efficiency
-WORKERS="${WORKERS:-1}"
-THREADS="${THREADS:-2}"
-TIMEOUT="${TIMEOUT:-120}"
-LOG_LEVEL="${LOG_LEVEL:-info}"
-# Recycle workers after fewer requests to prevent memory leaks
-MAX_REQUESTS="${MAX_REQUESTS:-500}"
-MAX_REQUESTS_JITTER="${MAX_REQUESTS_JITTER:-50}"
-# Worker class optimized for I/O bound applications
-WORKER_CLASS="${WORKER_CLASS:-gthread}"
-# Preload app to save memory (shared code across workers)
-PRELOAD="${PRELOAD:-true}"
+# Configuration (can be overridden via environment variables; Render sets $PORT)
+export HOST="${HOST:-0.0.0.0}"
+export PORT="${PORT:-8050}"
 
 echo ""
-echo "Production Configuration (Optimized for Render Free Tier):"
+echo "FastHTML POC Configuration:"
 echo "  Host: $HOST"
 echo "  Port: $PORT"
-echo "  Workers: $WORKERS (memory-optimized)"
-echo "  Threads per worker: $THREADS"
-echo "  Worker Class: $WORKER_CLASS"
-echo "  Preload App: $PRELOAD"
-echo "  Timeout: ${TIMEOUT}s"
-echo "  Log Level: $LOG_LEVEL"
-echo "  Max Requests: $MAX_REQUESTS (±$MAX_REQUESTS_JITTER jitter)"
 echo ""
 
-# Set PYTHONPATH to include the project root
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
+# fasthtml_poc/ is a deliberately isolated uv project (its own pyproject.toml
+# and lockfile) so it doesn't disturb the main Dash app's dependencies/venv.
+echo -e "${GREEN}📦 Installing fasthtml_poc dependencies...${NC}"
+(cd fasthtml_poc && uv sync)
 
-# Start Gunicorn
-echo -e "${GREEN}🚀 Starting Gunicorn in production mode...${NC}"
+echo ""
+echo -e "${GREEN}🚀 Starting FastHTML POC in production mode...${NC}"
 echo ""
 
-# Build gunicorn command with conditional preload
-GUNICORN_CMD="gunicorn \
-    --bind $HOST:$PORT \
-    --workers $WORKERS \
-    --threads $THREADS \
-    --worker-class $WORKER_CLASS \
-    --timeout $TIMEOUT \
-    --max-requests $MAX_REQUESTS \
-    --max-requests-jitter $MAX_REQUESTS_JITTER \
-    --log-level $LOG_LEVEL \
-    --access-logfile None \
-    --disable-redirect-access-to-syslog \
-    --error-logfile - \
-    --chdir ${PWD}"
+# Disable the dev auto-reloader (file watching) for production.
+export FASTHTML_RELOAD="false"
 
-# Add preload if enabled (saves memory but disables reload)
-if [ "$PRELOAD" = "true" ]; then
-    GUNICORN_CMD="$GUNICORN_CMD --preload"
-fi
-
-# Add temp dir if enabled
-if [ "$USE_WORKER_TMP_DIR" = "true" ]; then
-    GUNICORN_CMD="$GUNICORN_CMD --worker-tmp-dir /dev/shm"
-fi
-
-GUNICORN_CMD="$GUNICORN_CMD src.app:server"
-
-echo "Starting with command:"
-echo "$GUNICORN_CMD"
-echo ""
-
-exec $GUNICORN_CMD
+cd fasthtml_poc
+exec uv run python main.py
